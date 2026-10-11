@@ -4,22 +4,13 @@ import IOKit
 import IOKit.hid
 import TailorMouseCore
 
-struct DetectedDevice: Identifiable {
-    let id: UInt64
-    let identity: DeviceIdentity
-    let senderIDs: Set<UInt64>
-    /// Interfaces of one attached device share a location, while distinct
-    /// physical mice retain separate held-button/chord state.
-    let connectionID: String
-    /// An event-service registry entry exists. This does not prove that macOS
-    /// exposes its sender ID in every CGEvent or that all buttons emit events.
-    let canIdentifyEvents: Bool
-}
+typealias DetectedDevice = DeviceEndpoint
 
 /// Discovers metadata without opening devices or registering input callbacks.
 /// The timer also removes disconnected devices and discovers replacement IDs.
 final class DeviceCatalog: ObservableObject {
     @Published private(set) var devices: [DetectedDevice] = []
+    @Published private(set) var connections: [DeviceConnection] = []
     private let matches: [[String: Int]] = [
         [kIOHIDDeviceUsagePageKey: 1, kIOHIDDeviceUsageKey: 2],
         [kIOHIDDeviceUsagePageKey: 1, kIOHIDDeviceUsageKey: 1],
@@ -63,21 +54,18 @@ final class DeviceCatalog: ObservableObject {
                 registryID: id
             )
             let location = integerProperty(device, kIOHIDLocationIDKey)
-            let connection = "\(identity.canonicalFamily):\(identity.transport):\(location == 0 ? String(id) : String(location))"
+            let connection = DeviceEndpoint.connectionID(identity: identity, locationID: location)
             return DetectedDevice(id: id, identity: identity, senderIDs: routing.ids, connectionID: connection,
                                   canIdentifyEvents: routing.hasEventService)
         }.sorted {
             if $0.identity.product == $1.identity.product { return $0.id < $1.id }
             return $0.identity.product.localizedStandardCompare($1.identity.product) == .orderedAscending
         }
+        connections = DeviceConnection.grouping(devices)
     }
 
     func device(forSenderID senderID: UInt64) -> DetectedDevice? {
-        guard senderID != 0 else { return nil }
-        let matches = devices.filter { $0.senderIDs.contains(senderID) }
-        // Ambiguous identity fails closed rather than choosing a peripheral.
-        guard matches.count == 1 else { return nil }
-        return matches[0]
+        DeviceEndpoint.matching(senderID: senderID, in: devices)
     }
 
     private func integerProperty(_ device: IOHIDDevice, _ key: String) -> Int {

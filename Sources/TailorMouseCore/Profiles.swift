@@ -10,6 +10,7 @@ public enum ButtonAction: String, Codable, CaseIterable, Identifiable {
         case .appSwitcher: return "App Switcher"
         case .missionControl: return "Mission Control"
         case .mouseClick: return "Mouse Click"
+        case .disabled: return "No action"
         default: return rawValue.capitalized
         }
     }
@@ -115,6 +116,9 @@ public struct MouseProfile: Codable, Equatable, Identifiable {
         guard (0...31).contains(button) || (100...111).contains(button) else { return ActionBinding() }
         if let binding = modifierBindings["\(button):\(modifiers.rawValue)"] { return binding }
         if let binding = bindings[String(button)] { return binding }
+        // The Naga panel emits keyboard keys. Unassigned slots consume both
+        // transitions while running; explicit Passthrough retains native typing.
+        if (100...111).contains(button) { return ActionBinding(action: .disabled) }
         return ActionBinding(action: button == 3 ? button3 : button == 4 ? button4 : .passthrough)
     }
     public func action(for button: Int) -> ButtonAction { actionBinding(for: button).action }
@@ -128,10 +132,12 @@ public struct ProfileConfiguration: Codable, Equatable {
     public var defaultProfile: MouseProfile
     public var appProfiles: [MouseProfile]
     public var selectedDeviceFamily: String?
-    public init(defaultProfile: MouseProfile = MouseProfile(), appProfiles: [MouseProfile] = [], selectedDeviceFamily: String? = "razer.naga.pro") {
+    public var nagaKeyboardLayouts: [String: NagaKeyboardLayout]
+    public init(defaultProfile: MouseProfile = MouseProfile(), appProfiles: [MouseProfile] = [], selectedDeviceFamily: String? = "razer.naga.pro", nagaKeyboardLayouts: [String: NagaKeyboardLayout] = [:]) {
         self.defaultProfile = defaultProfile; self.appProfiles = appProfiles; self.selectedDeviceFamily = selectedDeviceFamily
+        self.nagaKeyboardLayouts = nagaKeyboardLayouts
     }
-    private enum CodingKeys: String, CodingKey { case schemaVersion, defaultProfile, appProfiles, selectedDeviceFamily }
+    private enum CodingKeys: String, CodingKey { case schemaVersion, defaultProfile, appProfiles, selectedDeviceFamily, nagaKeyboardLayouts }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let version = try c.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
@@ -139,6 +145,10 @@ public struct ProfileConfiguration: Codable, Equatable {
         defaultProfile = try c.decodeIfPresent(MouseProfile.self, forKey: .defaultProfile) ?? MouseProfile()
         appProfiles = try c.decodeIfPresent([MouseProfile].self, forKey: .appProfiles) ?? []
         selectedDeviceFamily = c.contains(.selectedDeviceFamily) ? try c.decodeIfPresent(String.self, forKey: .selectedDeviceFamily) : "razer.naga.pro"
+        nagaKeyboardLayouts = try c.decodeIfPresent([String: NagaKeyboardLayout].self, forKey: .nagaKeyboardLayouts) ?? [:]
+        guard nagaKeyboardLayouts.values.allSatisfy(\.isValid) else {
+            throw DecodingError.dataCorruptedError(forKey: .nagaKeyboardLayouts, in: c, debugDescription: "Invalid Naga keyboard calibration")
+        }
         schemaVersion = 2
     }
     public func encode(to encoder: Encoder) throws {
@@ -146,6 +156,7 @@ public struct ProfileConfiguration: Codable, Equatable {
         try c.encode(2, forKey: .schemaVersion)
         try c.encode(defaultProfile, forKey: .defaultProfile)
         try c.encode(appProfiles, forKey: .appProfiles)
+        try c.encode(nagaKeyboardLayouts, forKey: .nagaKeyboardLayouts)
         if let selectedDeviceFamily { try c.encode(selectedDeviceFamily, forKey: .selectedDeviceFamily) }
         else { try c.encodeNil(forKey: .selectedDeviceFamily) }
     }

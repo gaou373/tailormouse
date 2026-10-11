@@ -2,6 +2,30 @@ import XCTest
 @testable import TailorMouseCore
 
 final class InputRouterTests: XCTestCase {
+    func testUnassignedNagaButtonsConsumeMatchedPairsWithoutTypingAndKeepNativeClicks() {
+        var router = InputRouter()
+        let profile = MouseProfile()
+        for button in 100...111 {
+            let down = router.route(button: button, phase: .down, profile: profile)
+            XCTAssertTrue(down.suppress)
+            XCTAssertEqual(down.emissions.map { $0.binding.action }, [.disabled])
+            XCTAssertTrue(router.route(button: button, phase: .down, profile: profile).emissions.isEmpty)
+            var changed = profile
+            changed.bindings[String(button)] = ActionBinding(action: .passthrough)
+            XCTAssertTrue(router.route(button: button, phase: .up, profile: changed).suppress)
+            XCTAssertFalse(router.route(button: button, phase: .up, profile: changed).suppress)
+            XCTAssertFalse(router.route(button: button, phase: .down, profile: changed).suppress)
+            XCTAssertFalse(router.route(button: button, phase: .up, profile: profile).suppress)
+        }
+        for button in 0...2 {
+            XCTAssertFalse(router.route(button: button, phase: .down, profile: profile).suppress)
+            XCTAssertFalse(router.route(button: button, phase: .up, profile: profile).suppress)
+        }
+        _ = router.route(button: 100, phase: .down, profile: profile)
+        router.reset()
+        XCTAssertFalse(router.route(button: 100, phase: .up, profile: profile).suppress)
+        XCTAssertTrue(router.route(button: 100, phase: .down, profile: profile).suppress)
+    }
     func testAllTwelveNagaButtonsAndBothKeyboardBanks() {
         let top: [UInt16] = [18,19,20,21,23,22,26,28,25,29,27,24]
         let pad: [UInt16] = [83,84,85,86,87,88,89,91,92,82,78,69]
@@ -49,7 +73,7 @@ final class InputRouterTests: XCTestCase {
         XCTAssertTrue(router.route(button: 100, phase: .up, profile: MouseProfile()).suppress)
     }
     func testUnmatchedChordReplaysCapturedSingleAndSuppressesRelease() {
-        var profile = MouseProfile(bindings: ["100": ActionBinding(action: .copy)], chords: [ChordBinding(buttons: [100,101], binding: ActionBinding(action: .undo))])
+        var profile = MouseProfile(bindings: ["100": ActionBinding(action: .copy), "102": ActionBinding(action: .passthrough)], chords: [ChordBinding(buttons: [100,101], binding: ActionBinding(action: .undo))])
         var router = InputRouter()
         _ = router.route(button: 100, phase: .down, profile: profile)
         profile.bindings["100"] = ActionBinding(action: .paste)
@@ -62,7 +86,7 @@ final class InputRouterTests: XCTestCase {
     }
     func testPassthroughPrefixReplaysCompleteClickAndInvalidPrimaryChordIgnored() {
         var router = InputRouter()
-        let profile = MouseProfile(chords: [ChordBinding(buttons: [100,101], binding: ActionBinding(action: .copy)), ChordBinding(buttons: [0,3], binding: ActionBinding(action: .paste))])
+        let profile = MouseProfile(bindings: ["100": ActionBinding(action: .passthrough)], chords: [ChordBinding(buttons: [100,101], binding: ActionBinding(action: .copy)), ChordBinding(buttons: [0,3], binding: ActionBinding(action: .paste))])
         XCTAssertFalse(router.route(button: 0, phase: .down, profile: profile).suppress)
         XCTAssertFalse(router.route(button: 0, phase: .drag, profile: profile).suppress)
         XCTAssertFalse(router.route(button: 0, phase: .up, profile: profile).suppress)

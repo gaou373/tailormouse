@@ -24,13 +24,15 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <key>CFBundleDisplayName</key><string>TailorMouse</string>
 <key>CFBundleExecutable</key><string>TailorMouse</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.2.0</string>
-<key>CFBundleVersion</key><string>2</string>
+<key>CFBundleShortVersionString</key><string>0.2.2</string>
+<key>CFBundleVersion</key><string>4</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
 </dict></plist>
 PLIST
-codesign --force --sign - --identifier dev.tailormouse.app "$APP"
+# A real reusable signing identity preserves the designated requirement across
+# updates. Ad hoc builds are tied to their code hash and may need fresh TCC approval.
+codesign --force --sign "${TAILORMOUSE_SIGNING_IDENTITY:--}" --identifier dev.tailormouse.app "$APP"
 printf 'Built %s\n' "$APP"

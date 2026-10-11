@@ -12,6 +12,7 @@ Target: installed SteerMouse 5.8(0920), `/Applications/SteerMouse.app`. REA npm 
 - [UI-to-code map](ui-architecture.md): compiled control connections and matching native implementations.
 - [Static binary findings](static-findings.md): target hashes, methods, imported input APIs, Core Data schema and bounded assembly observations.
 - [Naga diagnosis](naga-pro.md): transport identity, driver conflict and profile investigation.
+- [Wired runtime findings](wired-runtime.md): Karabiner attribution conflict, composite interfaces, and captured side-button assignments.
 - Raw REA records and native-tool captures are local, ignored files under `.local/evidence/`.
 
 REA inventory observed 175 occurrences and 153 distinct content nodes. The Apple graph recognized the main app and nested login-item manager, with complete coverage within the supplied inventory. The UI decoder read five compiled nib documents (3,783 graph nodes, 2,899 edges). This describes packaged connections; it does not prove runtime button behavior.

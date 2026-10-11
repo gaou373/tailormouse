@@ -160,6 +160,7 @@ private struct ButtonsView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Choose a button").font(.title2.weight(.semibold))
                 Text("Select a button below, then choose what it does.").foregroundStyle(.secondary)
+                Text("Unassigned Naga side buttons use No action to prevent typing and alert sounds while running. Choose Passthrough to send their original keys.").font(.caption).foregroundStyle(.secondary)
             }
             HStack(alignment: .top, spacing: 24) {
                 VStack(alignment: .leading, spacing: 12) {
@@ -249,6 +250,10 @@ private struct ActionEditor: View {
                 ForEach(ButtonAction.allCases) { Text($0.title).tag($0) }
             }.frame(maxWidth: 410)
             switch binding.action {
+            case .passthrough:
+                Text("Sends the original input to the focused app. Naga side buttons can type keys or play an alert when the app cannot use them.").font(.caption).foregroundStyle(.secondary)
+            case .disabled:
+                Text("Consumes the button without sending an action while TailorMouse is running.").font(.caption).foregroundStyle(.secondary)
             case .shortcut: ShortcutRecorder(shortcut: $binding.shortcut)
             case .mouseClick:
                 Picker("Click", selection: $binding.mouseButton) {
@@ -431,10 +436,10 @@ private struct DevicesView: View {
             }
             GroupBox("Connections") {
                 VStack(alignment: .leading, spacing: 14) {
-                    if catalog.devices.isEmpty {
+                    if catalog.connections.isEmpty {
                         Text("No mouse detected. Connect your mouse, then refresh.").foregroundStyle(.secondary)
                     }
-                    ForEach(catalog.devices) { device in
+                    ForEach(catalog.connections) { device in
                         HStack(spacing: 12) {
                             Image(systemName: device.identity.transport.lowercased().contains("bluetooth") ? "antenna.radiowaves.left.and.right" : "cable.connector").font(.title3).frame(width: 28)
                             VStack(alignment: .leading, spacing: 4) {
@@ -455,7 +460,22 @@ private struct DevicesView: View {
                     Spacer()
                 }.padding(14)
             }
+            if !model.configuration.nagaKeyboardLayouts.isEmpty {
+                GroupBox("Side-button calibration") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(model.configuration.nagaKeyboardLayouts.keys.sorted(), id: \.self) { transport in
+                            HStack {
+                                Text("\(transport) · custom onboard keys")
+                                Spacer()
+                                Button("Use standard layout") { model.useStandardNagaLayout(transport: transport) }
+                            }
+                        }
+                        Text("Calibration identifies physical buttons. Your button actions and application profiles stay shared across connections.").font(.caption).foregroundStyle(.secondary)
+                    }.padding(14)
+                }
+            }
             Text("Naga Pro uses the same application profiles for Bluetooth, wired USB and the wireless receiver. Verify the twelve side buttons on each connection; device reports can vary.").font(.callout).foregroundStyle(.secondary)
+            Text("If clicks appear here but side buttons do not, turn off the Naga in Karabiner-Elements → Devices. Its virtual keyboard hides which physical device sent the key.").font(.callout).foregroundStyle(.secondary)
         }
     }
 }

@@ -1,5 +1,7 @@
 # TailorMouse 0.2 implementation and validation
 
+Version 0.2.2 adds physical connection grouping, quiet unassigned Naga buttons, transport calibration for captured onboard key sequences, and a local runtime diagnostic snapshot. See the [wired investigation](research/wired-runtime.md) for the Karabiner conflict, exact observations and the custom macro's ambiguity limit. The expanded test suite passes 34 tests, including a regression that reproduces the captured 10/11 macro timing.
+
 The user requested an original recreation and installation after the static research milestone. This document describes TailorMouse behavior, not recovered SteerMouse source or verified feature parity.
 
 ## Relationship to evidence

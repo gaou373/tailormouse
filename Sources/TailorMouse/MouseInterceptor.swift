@@ -11,16 +11,24 @@ final class MouseInterceptor {
     private var states: [String: InputState] = [:]
     private let generatedTag: Int64 = 0x5441494c4f52
     private let senderField = CGEventField(rawValue: 87)!
+    private var keyboardToken: UInt64 = 0
+    private var requestedAccessibilityApproval = false
     var configuration: () -> ProfileConfiguration = { ProfileConfiguration() }
     var devices: () -> [DetectedDevice] = { [] }
     var stopped: (String) -> Void = { _ in }
     var observed: (String) -> Void = { _ in }
+    var observedButton: (Int, ButtonPhase) -> Void = { _, _ in }
 
     private final class InputState {
         var router = InputRouter()
         var wheel = WheelTransformer()
         var pointer = PointerTransformer()
         var origins: [Int: CGEvent] = [:]
+        var keyboard = NagaKeyboardDecoder()
+        var keyboardEvents: [UInt64: CGEvent] = [:]
+        var keyboardReplayKeys: [Int: [UInt16]] = [:]
+        var keyboardWork: DispatchWorkItem?
+        deinit { keyboardWork?.cancel() }
     }
 
     static var steerMouseIsRunning: Bool {
@@ -35,9 +43,15 @@ final class MouseInterceptor {
         guard !Self.steerMouseIsRunning else {
             return "SteerMouse Manager is running. Quit it before starting TailorMouse."
         }
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        guard AXIsProcessTrustedWithOptions(options) else {
-            return "Allow TailorMouse in Privacy & Security → Accessibility, then press Start again."
+        if !AXIsProcessTrusted() {
+            // One native prompt per launch; repeated Start clicks must not loop
+            // the permission dialog when macOS retains an old build's entry.
+            if !requestedAccessibilityApproval {
+                requestedAccessibilityApproval = true
+                let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+                _ = AXIsProcessTrustedWithOptions(options)
+            }
+            return "macOS has not approved this build. In Accessibility, remove the old TailorMouse entry and add /Applications/TailorMouse.app, then quit and reopen the app."
         }
         guard CGPreflightListenEventAccess() else {
             return "Allow TailorMouse in Privacy & Security → Input Monitoring, then reopen TailorMouse."
@@ -95,8 +109,7 @@ final class MouseInterceptor {
         }
         let config = configuration()
         let sender = UInt64(bitPattern: event.getIntegerValueField(senderField))
-        let matches = devices().filter { sender != 0 && $0.senderIDs.contains(sender) }
-        let device = matches.count == 1 ? matches[0] : nil
+        let device = DeviceEndpoint.matching(senderID: sender, in: devices())
         let keyboard = type == .keyDown || type == .keyUp
         if keyboard {
             // Keyboard translation is confined to positively identified original Naga endpoints.
@@ -108,6 +121,10 @@ final class MouseInterceptor {
         let connection = device?.connectionID ?? "unknown.\(sender)"
         let state = states[connection] ?? InputState(); states[connection] = state
         let profile = config.profile(for: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
+        if keyboard, let device {
+            return handleKeyboard(type, event, state: state, device: device, profile: profile,
+                layout: config.nagaKeyboardLayouts[device.identity.transport] ?? NagaKeyboardLayout())
+        }
         if type == .scrollWheel {
             transformWheel(event, state: state, profile: profile)
             return Unmanaged.passUnretained(event)
@@ -118,11 +135,6 @@ final class MouseInterceptor {
         }
         let button: Int
         let phase: ButtonPhase
-        if keyboard {
-            let key = UInt16(clamping: event.getIntegerValueField(.keyboardEventKeycode))
-            guard let panel = NagaKeyMap.button(for: key) else { return Unmanaged.passUnretained(event) }
-            button = panel; phase = type == .keyDown ? .down : .up
-        } else {
             switch type {
             case .leftMouseDown: button = 0; phase = .down
             case .leftMouseUp: button = 0; phase = .up
@@ -135,17 +147,72 @@ final class MouseInterceptor {
             case .otherMouseDragged: button = Int(event.getIntegerValueField(.mouseEventButtonNumber)); phase = .drag
             default: return Unmanaged.passUnretained(event)
             }
-        }
         if phase == .down && state.origins[button] == nil { state.origins[button] = event.copy() }
         let decision = state.router.route(button: button, phase: phase, profile: profile, modifiers: modifierMask(event.flags))
-        for emission in decision.emissions { execute(emission.binding, origin: state.origins[emission.button] ?? event) }
+        for emission in decision.emissions { execute(emission, state: state, fallback: event) }
         if phase == .up { state.origins.removeValue(forKey: button) }
         if phase != .drag {
             let label = button >= 100 ? "Naga side \(button - 99)" : "Mouse button \(button + 1)"
-            let message = "\(label) · \(phase == .down ? "pressed" : "released") · \(device?.identity.transport ?? "mouse")"
-            DispatchQueue.main.async { [weak self] in self?.observed(message) }
+            let detail = decision.suppress ? "handled" : "passthrough"
+            let message = "\(label) · \(phase == .down ? "pressed" : "released") · \(detail) · \(device?.identity.transport ?? "mouse")"
+            DispatchQueue.main.async { [weak self] in self?.observedButton(button, phase); self?.observed(message) }
         }
         return decision.suppress ? nil : Unmanaged.passUnretained(event)
+    }
+
+    private func handleKeyboard(_ type: CGEventType, _ event: CGEvent, state: InputState,
+        device: DetectedDevice, profile: MouseProfile, layout: NagaKeyboardLayout) -> Unmanaged<CGEvent>? {
+        keyboardToken &+= 1
+        let token = keyboardToken
+        state.keyboardEvents[token] = event.copy()
+        let input = NagaKeyboardInput(token: token, keyCode: UInt16(clamping: event.getIntegerValueField(.keyboardEventKeycode)),
+            phase: type == .keyDown ? .down : .up, modifiers: modifierMask(event.flags), profile: profile)
+        let result = state.keyboard.route(input, now: ProcessInfo.processInfo.systemUptime, layout: layout)
+        processKeyboard(result.dispatches, state: state, transport: device.identity.transport)
+        scheduleKeyboardExpiry(state: state, connection: device.connectionID, transport: device.identity.transport)
+        return result.consume ? nil : Unmanaged.passUnretained(event)
+    }
+
+    private func processKeyboard(_ dispatches: [NagaKeyboardDispatch], state: InputState, transport: String) {
+        for input in dispatches {
+            guard let origin = state.keyboardEvents[input.originToken] ?? state.origins[input.button]
+                ?? input.nativeTokens.compactMap({ state.keyboardEvents[$0] }).first else { continue }
+            if input.phase == .down && state.origins[input.button] == nil {
+                state.origins[input.button] = origin
+                state.keyboardReplayKeys[input.button] = input.replayKeys
+            }
+            let decision = state.router.route(button: input.button, phase: input.phase,
+                profile: input.profile, modifiers: input.modifiers)
+            for emission in decision.emissions {
+                execute(emission, state: state, fallback: origin)
+            }
+            if !decision.suppress {
+                for token in input.nativeTokens {
+                    if let native = state.keyboardEvents[token] { post(native) }
+                }
+            }
+            let detail = decision.suppress ? "handled" : "passthrough"
+            let message = "Naga side \(input.button - 99) · \(input.phase == .down ? "pressed" : "released") · \(detail) · \(transport)"
+            DispatchQueue.main.async { [weak self] in self?.observedButton(input.button, input.phase); self?.observed(message) }
+            if input.phase == .up {
+                state.origins.removeValue(forKey: input.button)
+                state.keyboardReplayKeys.removeValue(forKey: input.button)
+            }
+        }
+        let retained = state.keyboard.retainedTokens
+        state.keyboardEvents = state.keyboardEvents.filter { retained.contains($0.key) }
+    }
+
+    private func scheduleKeyboardExpiry(state: InputState, connection: String, transport: String) {
+        state.keyboardWork?.cancel(); state.keyboardWork = nil
+        guard let deadline = state.keyboard.pendingDeadline else { return }
+        let work = DispatchWorkItem { [weak self, weak state] in
+            guard let self, let state, self.tap != nil, self.states[connection] === state else { return }
+            self.processKeyboard(state.keyboard.expire(now: ProcessInfo.processInfo.systemUptime), state: state, transport: transport)
+            self.scheduleKeyboardExpiry(state: state, connection: connection, transport: transport)
+        }
+        state.keyboardWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0.001, deadline - ProcessInfo.processInfo.systemUptime), execute: work)
     }
 
     private func transformWheel(_ event: CGEvent, state: InputState, profile: MouseProfile) {
@@ -188,6 +255,13 @@ final class MouseInterceptor {
         let dx = max(rect.minX - point.x, 0, point.x - rect.maxX)
         let dy = max(rect.minY - point.y, 0, point.y - rect.maxY)
         return dx * dx + dy * dy
+    }
+
+    private func execute(_ emission: InputEmission, state: InputState, fallback: CGEvent) {
+        let origin = state.origins[emission.button] ?? fallback
+        if emission.binding.action == .passthrough, let keys = state.keyboardReplayKeys[emission.button] {
+            for key in keys { shortcut(key, modifierMask(origin.flags)) }
+        } else { execute(emission.binding, origin: origin) }
     }
 
     private func execute(_ binding: ActionBinding, origin: CGEvent) {

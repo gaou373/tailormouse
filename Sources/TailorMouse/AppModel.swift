@@ -16,6 +16,8 @@ final class AppModel: ObservableObject {
     private var terminationObserver: NSObjectProtocol?
     private var hasEdits = false
     private var originalNeedsBackup = false
+    private var sideButtonDownEvents: [String: Int] = [:]
+    private var sideButtonUpEvents: [String: Int] = [:]
 
     init() {
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -37,8 +39,14 @@ final class AppModel: ObservableObject {
         }
         interceptor.configuration = { [weak self] in self?.configuration ?? ProfileConfiguration() }
         interceptor.devices = { [weak self] in self?.devices.devices ?? [] }
-        interceptor.observed = { [weak self] value in self?.lastInput = value }
-        interceptor.stopped = { [weak self] message in self?.isRunning = false; self?.status = message }
+        interceptor.observed = { [weak self] value in self?.lastInput = value; self?.writeRuntimeStatus() }
+        interceptor.observedButton = { [weak self] button, phase in
+            guard let self, (100...111).contains(button) else { return }
+            let label = String(button - 99)
+            if phase == .down { self.sideButtonDownEvents[label, default: 0] += 1 }
+            if phase == .up { self.sideButtonUpEvents[label, default: 0] += 1 }
+        }
+        interceptor.stopped = { [weak self] message in self?.isRunning = false; self?.status = message; self?.writeRuntimeStatus() }
         saveSubscription = $configuration.dropFirst().debounce(for: .milliseconds(300), scheduler: RunLoop.main).sink { [weak self] value in
             guard self?.hasEdits == true else { return }
             self?.save(value)
@@ -46,9 +54,13 @@ final class AppModel: ObservableObject {
         terminationObserver = NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
             guard let self else { return }
             self.interceptor.stop()
+            self.isRunning = false
+            self.status = "TailorMouse is closed."
+            self.writeRuntimeStatus()
             if self.hasEdits { self.save(self.configuration) }
         }
         devices.refresh()
+        writeRuntimeStatus()
     }
 
     deinit { if let terminationObserver { NotificationCenter.default.removeObserver(terminationObserver) } }
@@ -68,6 +80,13 @@ final class AppModel: ObservableObject {
         if isRunning { stop() }
         hasEdits = true
         configuration.selectedDeviceFamily = family
+    }
+
+    func useStandardNagaLayout(transport: String) {
+        if isRunning { stop() }
+        hasEdits = true
+        configuration.nagaKeyboardLayouts.removeValue(forKey: transport)
+        status = "Standard \(transport) side-button layout selected. Press Start when ready."
     }
 
     func addApplication() {
@@ -101,14 +120,36 @@ final class AppModel: ObservableObject {
 
     func start() {
         devices.refresh()
-        if let error = interceptor.start() { status = error; return }
+        if let error = interceptor.start() { status = error; writeRuntimeStatus(); return }
         isRunning = true
+        sideButtonDownEvents.removeAll(); sideButtonUpEvents.removeAll()
+        lastInput = "No input observed yet."
         status = "Running. Application profiles switch automatically."
+        writeRuntimeStatus()
     }
     func stop() {
         interceptor.stop()
         isRunning = false
         status = "Stopped. Your mouse works normally."
+        writeRuntimeStatus()
+    }
+
+    /// Local diagnostic snapshot: status and mouse-button labels only, never
+    /// typed characters, general keyboard events or a history of input.
+    private func writeRuntimeStatus() {
+        let snapshot: [String: Any] = [
+            "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development",
+            "isRunning": isRunning, "status": status, "lastInput": lastInput,
+            "connectionCount": devices.connections.count,
+            "sideButtonDownEvents": sideButtonDownEvents, "sideButtonUpEvents": sideButtonUpEvents,
+            "updatedAt": ISO8601DateFormatter().string(from: Date())
+        ]
+        let url = settingsURL.deletingLastPathComponent().appendingPathComponent("runtime-status.json")
+        // Diagnostics must never interrupt input processing or profile saving.
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if let data = try? JSONSerialization.data(withJSONObject: snapshot, options: [.sortedKeys]) {
+            try? data.write(to: url, options: .atomic)
+        }
     }
     func openPermissions() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") { NSWorkspace.shared.open(url) }
