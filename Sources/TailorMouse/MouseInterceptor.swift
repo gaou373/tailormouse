@@ -13,6 +13,7 @@ final class MouseInterceptor {
     private let senderField = CGEventField(rawValue: 87)!
     private var keyboardToken: UInt64 = 0
     private var requestedAccessibilityApproval = false
+    private var cursorPosition = PointerPositionTransformer()
     var configuration: () -> ProfileConfiguration = { ProfileConfiguration() }
     var devices: () -> [DetectedDevice] = { [] }
     var stopped: (String) -> Void = { _ in }
@@ -85,6 +86,7 @@ final class MouseInterceptor {
             return "macOS could not create the event run loop."
         }
         tap = newTap; source = runLoopSource; states.removeAll()
+        cursorPosition.reset()
         CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: newTap, enable: true)
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
@@ -107,7 +109,7 @@ final class MouseInterceptor {
         timer?.invalidate(); timer = nil
         if let tap { CGEvent.tapEnable(tap: tap, enable: false); CFMachPortInvalidate(tap) }
         if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
-        source = nil; tap = nil; states.removeAll()
+        source = nil; tap = nil; states.removeAll(); cursorPosition.reset()
     }
 
     private func handle(_ type: CGEventType, _ event: CGEvent, allowMousePrelude: Bool = true, replayProfile: MouseProfile? = nil) -> Unmanaged<CGEvent>? {
@@ -124,12 +126,18 @@ final class MouseInterceptor {
         let sender = UInt64(bitPattern: event.getIntegerValueField(senderField))
         let device = DeviceEndpoint.matching(senderID: sender, in: devices())
         let keyboard = type == .keyDown || type == .keyUp
+        let movement = [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged].contains(type)
         if keyboard {
             // Keyboard translation is confined to positively identified original Naga endpoints.
             guard device?.identity.canonicalFamily == "razer.naga.pro" else { return Unmanaged.passUnretained(event) }
         }
         if let family = config.selectedDeviceFamily {
-            guard device?.identity.canonicalFamily == family else { return Unmanaged.passUnretained(event) }
+            guard device?.identity.canonicalFamily == family else {
+                // A trackpad or another mouse moves the same system cursor.
+                // Its untouched position must become the next Naga baseline.
+                if movement { cursorPosition.rebase(at: event.location) }
+                return Unmanaged.passUnretained(event)
+            }
         }
         let connection = device?.connectionID ?? "unknown.\(sender)"
         let state = states[connection] ?? InputState(); states[connection] = state
@@ -176,7 +184,7 @@ final class MouseInterceptor {
             transformWheel(event, state: state, profile: profile)
             return Unmanaged.passUnretained(event)
         }
-        if [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged].contains(type) {
+        if movement {
             transformPointer(event, state: state, profile: profile)
             if type == .mouseMoved { return Unmanaged.passUnretained(event) }
         }
@@ -317,28 +325,32 @@ final class MouseInterceptor {
     private func transformPointer(_ event: CGEvent, state: InputState, profile: MouseProfile) {
         let dx = event.getIntegerValueField(.mouseEventDeltaX), dy = event.getIntegerValueField(.mouseEventDeltaY)
         let values = state.pointer.transform([dx, dy], profile: profile)
-        guard profile.safePointerSpeed != 1 else { return }
-        guard values.count == 2 else { return }
-        event.setIntegerValueField(.mouseEventDeltaX, value: values[0])
-        event.setIntegerValueField(.mouseEventDeltaY, value: values[1])
-        var point = event.location
-        point.x += Double(values[0]) - Double(dx); point.y += Double(values[1]) - Double(dy)
+        let nativePoint = event.location
+        guard profile.safePointerSpeed != 1 else { cursorPosition.rebase(at: nativePoint); return }
+        guard values.count == 2 else { cursorPosition.rebase(at: nativePoint); return }
         let screens = NSScreen.screens
         let primaryHeight = screens.first?.frame.height ?? 0
         let displays = screens.map { CGRect(x: $0.frame.minX, y: primaryHeight - $0.frame.maxY,
                                             width: $0.frame.width, height: $0.frame.height) }
-        if !displays.contains(where: { $0.contains(point) }),
-           let nearest = displays.min(by: { distance(point, to: $0) < distance(point, to: $1) }) {
-            point.x = min(nearest.maxX - 1, max(nearest.minX, point.x))
-            point.y = min(nearest.maxY - 1, max(nearest.minY, point.y))
+        let point = cursorPosition.target(for: nativePoint, profile: profile, displays: displays)
+        // Editing a session mouse event alone does not reposition the visible
+        // hardware cursor. The public warp API changes it without creating an
+        // event, so this does not recursively re-enter the tap.
+        if point != nativePoint {
+            guard CGWarpMouseCursorPosition(point) == .success else {
+                cursorPosition.rebase(at: nativePoint)
+                DispatchQueue.main.async { [weak self] in
+                    self?.stop(); self?.stopped("macOS could not apply pointer speed. Handling stopped; press Start to retry.")
+                }
+                return
+            }
+            event.location = point
         }
-        event.location = point
-    }
-
-    private func distance(_ point: CGPoint, to rect: CGRect) -> Double {
-        let dx = max(rect.minX - point.x, 0, point.x - rect.maxX)
-        let dy = max(rect.minY - point.y, 0, point.y - rect.maxY)
-        return dx * dx + dy * dy
+        // Setting location can reset delta fields. Restore them afterward for
+        // applications consuming relative mouse input.
+        event.setIntegerValueField(.mouseEventDeltaX, value: values[0])
+        event.setIntegerValueField(.mouseEventDeltaY, value: values[1])
+        cursorPosition.rebase(at: point)
     }
 
     private func execute(_ emission: InputEmission, state: InputState, fallback: CGEvent) {

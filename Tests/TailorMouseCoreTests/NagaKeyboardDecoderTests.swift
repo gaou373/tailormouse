@@ -7,6 +7,43 @@ final class NagaKeyboardDecoderTests: XCTestCase {
         NagaKeyboardInput(token: token, keyCode: key, phase: phase, modifiers: modifiers, profile: profile)
     }
 
+    func testStandardTenAndElevenRemainHeldIndependentlyUntilTheirOwnRelease() {
+        var decoder = NagaKeyboardDecoder(), router = InputRouter()
+        let standard = NagaKeyboardLayout()
+        let original = MouseProfile(bindings: ["109": ActionBinding(action: .copy), "110": ActionBinding(action: .paste)])
+        for (key, button, token) in [(UInt16(29), 109, UInt64(1)), (UInt16(27), 110, UInt64(2))] {
+            let down = decoder.route(input(token, key, .down, profile: original), now: 0, layout: standard)
+            XCTAssertEqual(down.dispatches.map(\.button), [button])
+            XCTAssertEqual(down.dispatches.map(\.phase), [.down])
+            XCTAssertEqual(down.dispatches.flatMap { router.route(button: $0.button, phase: $0.phase, profile: $0.profile).emissions }.count, 1)
+        }
+        // Passing the old macro deadline must not manufacture a release.
+        XCTAssertTrue(decoder.expire(now: 3).isEmpty)
+        XCTAssertNil(decoder.pendingDeadline)
+        for (key, button, token) in [(UInt16(29), 109, UInt64(3)), (UInt16(27), 110, UInt64(4))] {
+            let repeatDown = decoder.route(input(token, key, .down), now: 3, layout: standard)
+            XCTAssertEqual(repeatDown.dispatches.map(\.button), [button])
+            XCTAssertTrue(repeatDown.dispatches.flatMap { router.route(button: $0.button, phase: $0.phase, profile: $0.profile).emissions }.isEmpty)
+            let up = decoder.route(input(token + 2, key, .up), now: 4, layout: standard)
+            XCTAssertEqual(up.dispatches.map(\.button), [button])
+            XCTAssertEqual(up.dispatches.map(\.phase), [.up])
+            XCTAssertEqual(up.dispatches.first?.profile, original)
+            XCTAssertTrue(up.dispatches.allSatisfy { router.route(button: $0.button, phase: $0.phase, profile: $0.profile).suppress })
+        }
+        decoder.reset(); router.reset()
+        for key: UInt16 in [29, 27] {
+            _ = decoder.route(input(10, key, .down, profile: original), now: 5, layout: standard)
+        }
+        decoder.reset()
+        for key: UInt16 in [29, 27] {
+            let orphanUp = decoder.route(input(11, key, .up), now: 6, layout: standard)
+            XCTAssertFalse(orphanUp.consume)
+            XCTAssertTrue(orphanUp.dispatches.isEmpty)
+            XCTAssertEqual(decoder.route(input(12, key, .down), now: 7, layout: standard).dispatches.map(\.phase), [.down])
+            XCTAssertEqual(decoder.route(input(13, key, .up), now: 8, layout: standard).dispatches.map(\.phase), [.up])
+        }
+    }
+
     func testRecordedTenAndElevenMacrosSurviveTheirActualTiming() {
         let wired = NagaKeyboardLayout(sequences: [
             NagaKeySequence(button: 109, keyCodes: [29,36]),
