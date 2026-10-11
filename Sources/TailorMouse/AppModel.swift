@@ -9,6 +9,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var isRunning = false
     @Published var status = "Ready. Choose your mappings, then press Start."
     @Published var lastInput = "No input observed yet."
+    @Published private(set) var lastSideButtonPress = "None yet"
+    @Published private(set) var lastSideButtonRelease = "None yet"
     let devices = DeviceCatalog()
     private let interceptor = MouseInterceptor()
     private let settingsURL: URL
@@ -18,6 +20,8 @@ final class AppModel: ObservableObject {
     private var originalNeedsBackup = false
     private var sideButtonDownEvents: [String: Int] = [:]
     private var sideButtonUpEvents: [String: Int] = [:]
+    private var mouseButtonDownEvents: [String: Int] = [:]
+    private var mouseButtonUpEvents: [String: Int] = [:]
 
     init() {
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -41,10 +45,22 @@ final class AppModel: ObservableObject {
         interceptor.devices = { [weak self] in self?.devices.devices ?? [] }
         interceptor.observed = { [weak self] value in self?.lastInput = value; self?.writeRuntimeStatus() }
         interceptor.observedButton = { [weak self] button, phase in
-            guard let self, (100...111).contains(button) else { return }
-            let label = String(button - 99)
-            if phase == .down { self.sideButtonDownEvents[label, default: 0] += 1 }
-            if phase == .up { self.sideButtonUpEvents[label, default: 0] += 1 }
+            guard let self else { return }
+            if (100...111).contains(button) {
+                let label = String(button - 99)
+                if phase == .down {
+                    self.sideButtonDownEvents[label, default: 0] += 1
+                    self.lastSideButtonPress = "Naga side \(label)"
+                }
+                if phase == .up {
+                    self.sideButtonUpEvents[label, default: 0] += 1
+                    self.lastSideButtonRelease = "Naga side \(label)"
+                }
+            } else if (0...31).contains(button) {
+                let label = String(button + 1)
+                if phase == .down { self.mouseButtonDownEvents[label, default: 0] += 1 }
+                if phase == .up { self.mouseButtonUpEvents[label, default: 0] += 1 }
+            }
         }
         interceptor.stopped = { [weak self] message in self?.isRunning = false; self?.status = message; self?.writeRuntimeStatus() }
         saveSubscription = $configuration.dropFirst().debounce(for: .milliseconds(300), scheduler: RunLoop.main).sink { [weak self] value in
@@ -123,6 +139,8 @@ final class AppModel: ObservableObject {
         if let error = interceptor.start() { status = error; writeRuntimeStatus(); return }
         isRunning = true
         sideButtonDownEvents.removeAll(); sideButtonUpEvents.removeAll()
+        mouseButtonDownEvents.removeAll(); mouseButtonUpEvents.removeAll()
+        lastSideButtonPress = "None yet"; lastSideButtonRelease = "None yet"
         lastInput = "No input observed yet."
         status = "Running. Application profiles switch automatically."
         writeRuntimeStatus()
@@ -142,6 +160,8 @@ final class AppModel: ObservableObject {
             "isRunning": isRunning, "status": status, "lastInput": lastInput,
             "connectionCount": devices.connections.count,
             "sideButtonDownEvents": sideButtonDownEvents, "sideButtonUpEvents": sideButtonUpEvents,
+            "mouseButtonDownEvents": mouseButtonDownEvents, "mouseButtonUpEvents": mouseButtonUpEvents,
+            "lastSideButtonPress": lastSideButtonPress, "lastSideButtonRelease": lastSideButtonRelease,
             "updatedAt": ISO8601DateFormatter().string(from: Date())
         ]
         let url = settingsURL.deletingLastPathComponent().appendingPathComponent("runtime-status.json")

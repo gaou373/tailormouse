@@ -10,13 +10,23 @@ public struct NagaKeySequence: Codable, Equatable {
 public struct NagaKeyboardLayout: Codable, Equatable {
     public var keyOverrides: [String: Int]
     public var sequences: [NagaKeySequence]
-    public init(keyOverrides: [String: Int] = [:], sequences: [NagaKeySequence] = []) {
-        self.keyOverrides = keyOverrides; self.sequences = sequences
+    public var doubleClickPrefixes: [UInt16]
+    public init(keyOverrides: [String: Int] = [:], sequences: [NagaKeySequence] = [], doubleClickPrefixes: [UInt16] = []) {
+        self.keyOverrides = keyOverrides; self.sequences = sequences; self.doubleClickPrefixes = doubleClickPrefixes
+    }
+    private enum CodingKeys: String, CodingKey { case keyOverrides, sequences, doubleClickPrefixes }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        keyOverrides = try c.decodeIfPresent([String: Int].self, forKey: .keyOverrides) ?? [:]
+        sequences = try c.decodeIfPresent([NagaKeySequence].self, forKey: .sequences) ?? []
+        doubleClickPrefixes = try c.decodeIfPresent([UInt16].self, forKey: .doubleClickPrefixes) ?? []
     }
     public var isValid: Bool {
         keyOverrides.allSatisfy { UInt16($0.key).map { $0 <= 127 } == true && (100...111).contains($0.value) } &&
         sequences.allSatisfy { (100...111).contains($0.button) && $0.keyCodes.count == 2 && $0.keyCodes.allSatisfy { $0 <= 127 } && button(for: $0.keyCodes[0]) != nil } &&
-        Set(sequences.map { $0.keyCodes.map(String.init).joined(separator: ",") }).count == sequences.count
+        Set(sequences.map { $0.keyCodes.map(String.init).joined(separator: ",") }).count == sequences.count &&
+        Set(doubleClickPrefixes).count == doubleClickPrefixes.count &&
+        doubleClickPrefixes.allSatisfy { key in sequences.contains { $0.keyCodes.first == key } }
     }
     public func button(for key: UInt16) -> Int? { keyOverrides[String(key)] ?? NagaKeyMap.button(for: key) }
 }

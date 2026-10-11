@@ -19,6 +19,14 @@ final class MouseInterceptor {
     var observed: (String) -> Void = { _ in }
     var observedButton: (Int, ButtonPhase) -> Void = { _, _ in }
 
+    private struct RecordedMouseInput {
+        let event: CGEvent
+        let profile: MouseProfile
+    }
+    private struct MousePrelude {
+        let events: [RecordedMouseInput]
+        let keySequences: [[UInt16]]
+    }
     private final class InputState {
         var router = InputRouter()
         var wheel = WheelTransformer()
@@ -28,7 +36,12 @@ final class MouseInterceptor {
         var keyboardEvents: [UInt64: CGEvent] = [:]
         var keyboardReplayKeys: [Int: [UInt16]] = [:]
         var keyboardWork: DispatchWorkItem?
-        deinit { keyboardWork?.cancel() }
+        var mousePrelude = NagaMousePreludeDecoder()
+        var mousePreludeEvents: [UInt64: RecordedMouseInput] = [:]
+        var mousePreludeWork: DispatchWorkItem?
+        var keyboardPreludes: [UInt64: MousePrelude] = [:]
+        var keyboardMouseReplay: [Int: [RecordedMouseInput]] = [:]
+        deinit { keyboardWork?.cancel(); mousePreludeWork?.cancel() }
     }
 
     static var steerMouseIsRunning: Bool {
@@ -97,7 +110,7 @@ final class MouseInterceptor {
         source = nil; tap = nil; states.removeAll()
     }
 
-    private func handle(_ type: CGEventType, _ event: CGEvent) -> Unmanaged<CGEvent>? {
+    private func handle(_ type: CGEventType, _ event: CGEvent, allowMousePrelude: Bool = true, replayProfile: MouseProfile? = nil) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             DispatchQueue.main.async { [weak self] in
                 self?.stop(); self?.stopped("macOS paused mouse handling. Press Start to resume.")
@@ -120,10 +133,44 @@ final class MouseInterceptor {
         }
         let connection = device?.connectionID ?? "unknown.\(sender)"
         let state = states[connection] ?? InputState(); states[connection] = state
-        let profile = config.profile(for: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
+        let profile = replayProfile ?? config.profile(for: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
+        let layout = device.map { config.nagaKeyboardLayouts[$0.identity.transport] ?? NagaKeyboardLayout() } ?? NagaKeyboardLayout()
+        var prelude: MousePrelude?
+        if allowMousePrelude, device?.identity.canonicalFamily == "razer.naga.pro", !layout.doubleClickPrefixes.isEmpty {
+            if type == .leftMouseDown || type == .leftMouseUp {
+                keyboardToken &+= 1
+                let token = keyboardToken
+                guard let copy = event.copy() else {
+                    replayMousePrelude(state.mousePrelude.flush(), state: state)
+                    scheduleMousePreludeExpiry(state: state, connection: connection)
+                    return handle(type, event, allowMousePrelude: false, replayProfile: profile)
+                }
+                state.mousePreludeEvents[token] = RecordedMouseInput(event: copy, profile: profile)
+                let result = state.mousePrelude.mouse(token: token, phase: type == .leftMouseDown ? .down : .up,
+                    now: ProcessInfo.processInfo.systemUptime)
+                replayMousePrelude(result.replayTokens, state: state)
+                scheduleMousePreludeExpiry(state: state, connection: connection)
+                if result.consume { return nil }
+                state.mousePreludeEvents.removeValue(forKey: token)
+            } else if type == .keyDown {
+                let key = UInt16(clamping: event.getIntegerValueField(.keyboardEventKeycode))
+                let result = state.mousePrelude.key(key, now: ProcessInfo.processInfo.systemUptime,
+                    allowedPrefixes: Set(layout.doubleClickPrefixes))
+                replayMousePrelude(result.replayTokens, state: state)
+                let events = result.matchedTokens.compactMap { state.mousePreludeEvents.removeValue(forKey: $0) }
+                if !events.isEmpty {
+                    prelude = MousePrelude(events: events,
+                        keySequences: layout.sequences.filter { $0.keyCodes.first == key }.map(\.keyCodes))
+                }
+                scheduleMousePreludeExpiry(state: state, connection: connection)
+            } else if type != .mouseMoved {
+                replayMousePrelude(state.mousePrelude.flush(), state: state)
+                scheduleMousePreludeExpiry(state: state, connection: connection)
+            }
+        }
         if keyboard, let device {
             return handleKeyboard(type, event, state: state, device: device, profile: profile,
-                layout: config.nagaKeyboardLayouts[device.identity.transport] ?? NagaKeyboardLayout())
+                layout: layout, prelude: prelude)
         }
         if type == .scrollWheel {
             transformWheel(event, state: state, profile: profile)
@@ -161,10 +208,11 @@ final class MouseInterceptor {
     }
 
     private func handleKeyboard(_ type: CGEventType, _ event: CGEvent, state: InputState,
-        device: DetectedDevice, profile: MouseProfile, layout: NagaKeyboardLayout) -> Unmanaged<CGEvent>? {
+        device: DetectedDevice, profile: MouseProfile, layout: NagaKeyboardLayout, prelude: MousePrelude?) -> Unmanaged<CGEvent>? {
         keyboardToken &+= 1
         let token = keyboardToken
         state.keyboardEvents[token] = event.copy()
+        if let prelude { state.keyboardPreludes[token] = prelude }
         let input = NagaKeyboardInput(token: token, keyCode: UInt16(clamping: event.getIntegerValueField(.keyboardEventKeycode)),
             phase: type == .keyDown ? .down : .up, modifiers: modifierMask(event.flags), profile: profile)
         let result = state.keyboard.route(input, now: ProcessInfo.processInfo.systemUptime, layout: layout)
@@ -177,7 +225,16 @@ final class MouseInterceptor {
         for input in dispatches {
             guard let origin = state.keyboardEvents[input.originToken] ?? state.origins[input.button]
                 ?? input.nativeTokens.compactMap({ state.keyboardEvents[$0] }).first else { continue }
-            if input.phase == .down && state.origins[input.button] == nil {
+            let firstDown = input.phase == .down && state.origins[input.button] == nil
+            if let prelude = state.keyboardPreludes.removeValue(forKey: input.originToken) {
+                if prelude.keySequences.contains(input.replayKeys) {
+                    state.keyboardMouseReplay[input.button] = prelude.events
+                } else {
+                    // A partial/nonmatching macro must not eat ordinary clicks.
+                    replayMouseInputs(prelude.events)
+                }
+            }
+            if firstDown {
                 state.origins[input.button] = origin
                 state.keyboardReplayKeys[input.button] = input.replayKeys
             }
@@ -187,6 +244,7 @@ final class MouseInterceptor {
                 execute(emission, state: state, fallback: origin)
             }
             if !decision.suppress {
+                if firstDown { for original in state.keyboardMouseReplay[input.button] ?? [] { post(original.event) } }
                 for token in input.nativeTokens {
                     if let native = state.keyboardEvents[token] { post(native) }
                 }
@@ -197,10 +255,36 @@ final class MouseInterceptor {
             if input.phase == .up {
                 state.origins.removeValue(forKey: input.button)
                 state.keyboardReplayKeys.removeValue(forKey: input.button)
+                state.keyboardMouseReplay.removeValue(forKey: input.button)
             }
         }
         let retained = state.keyboard.retainedTokens
         state.keyboardEvents = state.keyboardEvents.filter { retained.contains($0.key) }
+        state.keyboardPreludes = state.keyboardPreludes.filter { retained.contains($0.key) }
+    }
+
+    private func replayMouseInputs(_ events: [RecordedMouseInput]) {
+        for input in events {
+            if handle(input.event.type, input.event, allowMousePrelude: false, replayProfile: input.profile) != nil {
+                post(input.event)
+            }
+        }
+    }
+
+    private func replayMousePrelude(_ tokens: [UInt64], state: InputState) {
+        replayMouseInputs(tokens.compactMap { state.mousePreludeEvents.removeValue(forKey: $0) })
+    }
+
+    private func scheduleMousePreludeExpiry(state: InputState, connection: String) {
+        state.mousePreludeWork?.cancel(); state.mousePreludeWork = nil
+        guard let deadline = state.mousePrelude.pendingDeadline else { return }
+        let work = DispatchWorkItem { [weak self, weak state] in
+            guard let self, let state, self.tap != nil, self.states[connection] === state else { return }
+            self.replayMousePrelude(state.mousePrelude.expire(now: ProcessInfo.processInfo.systemUptime), state: state)
+            self.scheduleMousePreludeExpiry(state: state, connection: connection)
+        }
+        state.mousePreludeWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0.001, deadline - ProcessInfo.processInfo.systemUptime), execute: work)
     }
 
     private func scheduleKeyboardExpiry(state: InputState, connection: String, transport: String) {
@@ -260,6 +344,7 @@ final class MouseInterceptor {
     private func execute(_ emission: InputEmission, state: InputState, fallback: CGEvent) {
         let origin = state.origins[emission.button] ?? fallback
         if emission.binding.action == .passthrough, let keys = state.keyboardReplayKeys[emission.button] {
+            for original in state.keyboardMouseReplay[emission.button] ?? [] { post(original.event) }
             for key in keys { shortcut(key, modifierMask(origin.flags)) }
         } else { execute(emission.binding, origin: origin) }
     }

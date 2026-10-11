@@ -454,10 +454,15 @@ private struct DevicesView: View {
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(14)
             }
             GroupBox("Input activity") {
-                HStack {
-                    Circle().fill(model.isRunning ? .green : .secondary).frame(width: 7, height: 7)
-                    Text(model.isRunning ? model.lastInput : "Press Start to observe input from your selected mouse.").font(.callout).foregroundStyle(.secondary)
-                    Spacer()
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Circle().fill(model.isRunning ? .green : .secondary).frame(width: 7, height: 7)
+                        Text(model.isRunning ? model.lastInput : "Press Start to observe input from your selected mouse.").font(.callout).foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                    LabeledContent("Last side-button press", value: model.lastSideButtonPress)
+                    LabeledContent("Last side-button release", value: model.lastSideButtonRelease)
+                    Text("These two rows keep the latest side-button events visible. Onboard macros can finish before you release the physical button.").font(.caption).foregroundStyle(.secondary)
                 }.padding(14)
             }
             if !model.configuration.nagaKeyboardLayouts.isEmpty {
