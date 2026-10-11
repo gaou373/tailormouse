@@ -24,11 +24,14 @@ final class AppModel: ObservableObject {
     private var mouseButtonDownEvents: [String: Int] = [:]
     private var mouseButtonUpEvents: [String: Int] = [:]
 
-    init() {
+    init(preview: Bool = false) {
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("TailorMouse", isDirectory: true)
         settingsURL = directory.appendingPathComponent("profiles.json")
         selectedID = configuration.defaultProfile.id
+        // UI rendering uses an isolated in-memory model. It never loads/saves
+        // user settings, writes runtime status or starts input interception.
+        if preview { return }
         if FileManager.default.fileExists(atPath: settingsURL.path) {
             do {
                 let data = try Data(contentsOf: settingsURL)

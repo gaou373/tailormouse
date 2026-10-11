@@ -4,6 +4,7 @@ An independently written macOS mouse customization app, informed by an evidence-
 
 ## Features
 
+- Compact tabbed window with profile/device menus and a separate button editor.
 - Default and application-specific profiles, with import/export.
 - Twelve Naga Pro side-button slots, ordinary mouse buttons and modifier-specific mappings.
 - Preset actions, recorded keyboard shortcuts, mouse clicks and scroll actions.
@@ -33,7 +34,7 @@ Build output: `.local/build/TailorMouse.app`. Installation copies an ad hoc sign
 
 Ad hoc signing identifies the exact build: macOS can retain an enabled-looking permission entry that no longer matches after an update. Remove that stale TailorMouse entry, add the installed copy in Accessibility and Input Monitoring, then quit and reopen. A targeted `tccutil reset Accessibility dev.tailormouse.app` / `tccutil reset ListenEvent dev.tailormouse.app` clears only this app's prior approvals; the user must grant them again. Builds/installers never run these resets automatically. For a reusable certificate already configured in Keychain, set `TAILORMOUSE_SIGNING_IDENTITY` when building; no certificate or key is uploaded.
 
-Open TailorMouse, configure mappings, then press **Start** when ready. Active handling requires Accessibility and Input Monitoring permission. The app checks permissions and refuses to start while SteerMouse Manager runs; it never quits that manager. Builds, tests and installation do not enable handling, grant permissions or add login items.
+Choose **Default** or an application in the top profile menu; **Edit** adds/removes application profiles and imports/exports settings. In **Buttons**, click an assignment to open its editor. **OK** saves; **Cancel** leaves the mapping unchanged. The page dots select ordinary buttons, side buttons 1–6 and side buttons 7–12; the ellipsis menu contains additional mouse buttons. The modifier strip selects mappings for keys held while clicking. Configure mappings, then press **Start** when ready. Active handling requires Accessibility and Input Monitoring permission. The app checks permissions and refuses to start while SteerMouse Manager runs; it never quits that manager. Builds, tests and installation do not enable handling, grant permissions or add login items.
 
 Unassigned Naga side buttons use **No action** while running, preventing unintended typing and alert sounds. Explicit **Passthrough** forwards their native keys. If ordinary clicks appear in activity but the side panel does not, exclude the Naga in Karabiner-Elements → Devices; its virtual keyboard can hide the physical sender. See the [wired diagnosis](docs/research/wired-runtime.md).
 
