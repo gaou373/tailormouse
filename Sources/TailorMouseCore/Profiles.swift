@@ -1,5 +1,4 @@
 import Foundation
-import CoreGraphics
 
 public enum ButtonAction: String, Codable, CaseIterable, Identifiable {
     case passthrough, disabled, back, forward, copy, paste, cut, undo, redo, selectAll
@@ -235,34 +234,5 @@ public struct PointerTransformer {
     }
     public mutating func transform(dx: Int64, dy: Int64, profile: MouseProfile) -> (dx: Int64, dy: Int64) {
         let result = transform([dx, dy], profile: profile); return (result[0], result[1])
-    }
-}
-
-/// The cursor is shared by every pointing device. Scale its actual position
-/// change, which can be fractional and differ from the event's integer deltas.
-/// Commit the position actually applied, or rebase after untouched movement.
-public struct PointerPositionTransformer {
-    private var anchor: CGPoint?
-    public init() {}
-    public mutating func reset() { anchor = nil }
-    public mutating func rebase(at point: CGPoint) {
-        anchor = point.x.isFinite && point.y.isFinite ? point : nil
-    }
-    public func target(for point: CGPoint, profile: MouseProfile, displays: [CGRect] = []) -> CGPoint {
-        guard let anchor, point.x.isFinite, point.y.isFinite else { return point }
-        let factor = profile.safePointerSpeed
-        guard factor != 1 else { return point }
-        let result = CGPoint(x: anchor.x + (point.x - anchor.x) * factor,
-                             y: anchor.y + (point.y - anchor.y) * factor)
-        guard result.x.isFinite && result.y.isFinite else { return point }
-        guard !displays.isEmpty, !displays.contains(where: { $0.contains(result) }),
-              let nearest = displays.min(by: { distance(result, to: $0) < distance(result, to: $1) }) else { return result }
-        return CGPoint(x: min(nearest.maxX - 1, max(nearest.minX, result.x)),
-                       y: min(nearest.maxY - 1, max(nearest.minY, result.y)))
-    }
-    private func distance(_ point: CGPoint, to rect: CGRect) -> Double {
-        let dx = max(rect.minX - point.x, 0, point.x - rect.maxX)
-        let dy = max(rect.minY - point.y, 0, point.y - rect.maxY)
-        return dx * dx + dy * dy
     }
 }

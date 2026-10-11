@@ -12,6 +12,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var lastSideButtonPress = "None yet"
     @Published private(set) var lastSideButtonRelease = "None yet"
     let devices = DeviceCatalog()
+    let sensitivity = NagaSensitivity()
     private let interceptor = MouseInterceptor()
     private let settingsURL: URL
     private var saveSubscription: AnyCancellable?

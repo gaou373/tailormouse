@@ -13,7 +13,6 @@ final class MouseInterceptor {
     private let senderField = CGEventField(rawValue: 87)!
     private var keyboardToken: UInt64 = 0
     private var requestedAccessibilityApproval = false
-    private var cursorPosition = PointerPositionTransformer()
     var configuration: () -> ProfileConfiguration = { ProfileConfiguration() }
     var devices: () -> [DetectedDevice] = { [] }
     var stopped: (String) -> Void = { _ in }
@@ -31,7 +30,6 @@ final class MouseInterceptor {
     private final class InputState {
         var router = InputRouter()
         var wheel = WheelTransformer()
-        var pointer = PointerTransformer()
         var origins: [Int: CGEvent] = [:]
         var keyboard = NagaKeyboardDecoder()
         var keyboardEvents: [UInt64: CGEvent] = [:]
@@ -86,7 +84,6 @@ final class MouseInterceptor {
             return "macOS could not create the event run loop."
         }
         tap = newTap; source = runLoopSource; states.removeAll()
-        cursorPosition.reset()
         CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: newTap, enable: true)
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
@@ -109,7 +106,7 @@ final class MouseInterceptor {
         timer?.invalidate(); timer = nil
         if let tap { CGEvent.tapEnable(tap: tap, enable: false); CFMachPortInvalidate(tap) }
         if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
-        source = nil; tap = nil; states.removeAll(); cursorPosition.reset()
+        source = nil; tap = nil; states.removeAll()
     }
 
     private func handle(_ type: CGEventType, _ event: CGEvent, allowMousePrelude: Bool = true, replayProfile: MouseProfile? = nil) -> Unmanaged<CGEvent>? {
@@ -133,9 +130,6 @@ final class MouseInterceptor {
         }
         if let family = config.selectedDeviceFamily {
             guard device?.identity.canonicalFamily == family else {
-                // A trackpad or another mouse moves the same system cursor.
-                // Its untouched position must become the next Naga baseline.
-                if movement { cursorPosition.rebase(at: event.location) }
                 return Unmanaged.passUnretained(event)
             }
         }
@@ -185,7 +179,8 @@ final class MouseInterceptor {
             return Unmanaged.passUnretained(event)
         }
         if movement {
-            transformPointer(event, state: state, profile: profile)
+            // Native cursor positions and relative deltas must remain untouched.
+            // Sensitivity is an explicit hardware DPI setting, outside this tap.
             if type == .mouseMoved { return Unmanaged.passUnretained(event) }
         }
         let button: Int
@@ -320,37 +315,6 @@ final class MouseInterceptor {
         for axis in 0..<2 {
             for field in precise[axis] { event.setDoubleValueField(field, value: event.getDoubleValueField(field) * factors[axis]) }
         }
-    }
-
-    private func transformPointer(_ event: CGEvent, state: InputState, profile: MouseProfile) {
-        let dx = event.getIntegerValueField(.mouseEventDeltaX), dy = event.getIntegerValueField(.mouseEventDeltaY)
-        let values = state.pointer.transform([dx, dy], profile: profile)
-        let nativePoint = event.location
-        guard profile.safePointerSpeed != 1 else { cursorPosition.rebase(at: nativePoint); return }
-        guard values.count == 2 else { cursorPosition.rebase(at: nativePoint); return }
-        let screens = NSScreen.screens
-        let primaryHeight = screens.first?.frame.height ?? 0
-        let displays = screens.map { CGRect(x: $0.frame.minX, y: primaryHeight - $0.frame.maxY,
-                                            width: $0.frame.width, height: $0.frame.height) }
-        let point = cursorPosition.target(for: nativePoint, profile: profile, displays: displays)
-        // Editing a session mouse event alone does not reposition the visible
-        // hardware cursor. The public warp API changes it without creating an
-        // event, so this does not recursively re-enter the tap.
-        if point != nativePoint {
-            guard CGWarpMouseCursorPosition(point) == .success else {
-                cursorPosition.rebase(at: nativePoint)
-                DispatchQueue.main.async { [weak self] in
-                    self?.stop(); self?.stopped("macOS could not apply pointer speed. Handling stopped; press Start to retry.")
-                }
-                return
-            }
-            event.location = point
-        }
-        // Setting location can reset delta fields. Restore them afterward for
-        // applications consuming relative mouse input.
-        event.setIntegerValueField(.mouseEventDeltaX, value: values[0])
-        event.setIntegerValueField(.mouseEventDeltaY, value: values[1])
-        cursorPosition.rebase(at: point)
     }
 
     private func execute(_ emission: InputEmission, state: InputState, fallback: CGEvent) {

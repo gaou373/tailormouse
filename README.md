@@ -9,13 +9,14 @@ An independently written macOS mouse customization app, informed by an evidence-
 - Preset actions, recorded keyboard shortcuts, mouse clicks and scroll actions.
 - Side-button chords with paired press/release routing and recovery.
 - Separate horizontal/vertical wheel speed and direction controls.
-- Pointer-speed scaling and device discovery.
+- Explicit USB hardware DPI control with readback, private backups and Restore previous DPI.
+- Device discovery.
 - One Naga Pro family across Bluetooth, wired USB and the wireless receiver.
 - One device row per physical connection, with transport calibration for custom onboard keys.
 - Persistent last-side-button press and release indicators.
 - Explicit Start/Stop and a menu-bar Stop control. Input handling starts stopped.
 
-This is an initial functional recreation of common controls, not full SteerMouse parity. Physical Naga buttons still require testing on every transport. The current processor handles events macOS exposes; it cannot recover buttons whose reports never become events or initialize vendor-specific firmware. Pointer scaling operates above macOS tracking rather than replacing its acceleration curve. See [implementation and validation](docs/implementation.md).
+This is an initial functional recreation of common controls, not full SteerMouse parity. Physical Naga buttons still require testing on every transport. The current processor handles events macOS exposes; it cannot recover buttons whose reports never become events or initialize vendor-specific firmware. Cursor movement uses native macOS tracking; hardware DPI control currently supports the original wired Naga Pro only. See [implementation and validation](docs/implementation.md).
 
 ## Build and install
 
@@ -40,7 +41,7 @@ Settings live separately at `~/Library/Application Support/TailorMouse/profiles.
 
 Transport calibration is stored separately from action profiles in `nagaKeyboardLayouts`. It supports individual key overrides, captured two-key onboard sequences, and their calibrated double-click prefixes. Prefix recognition delays ordinary left clicks on that calibrated Naga connection by up to 12 ms; unmatched clicks replay normally. The Device tab can restore the standard layout after the mouse itself emits standard single-key assignments. That control changes TailorMouse calibration only; it does not reprogram onboard mouse profiles. A local `runtime-status.json` snapshot provides status and aggregate Naga transition counts without recording ordinary keyboard input.
 
-Version 0.2.4 applies pointer gain to the actual cursor position using the public Quartz cursor API. It preserves fractional movement, rebases after another input device moves the cursor, and clamps to connected displays. It takes effect while Running; Stop restores native movement.
+Version 0.2.5 removes the 0.2.4 cursor-warp correction after the user reported difficult movement and slider dragging. Pointer positions and relative deltas pass through unchanged. In Cursor, **Read from mouse** loads the wired Naga's live DPI; choose a preset or type a value, then **Apply to mouse**. The app backs up the previous X/Y values, writes only live DPI and verifies readback; failed writes trigger verified recovery. **Restore previous DPI** undoes the last change on the same still-connected mouse. This is an explicit mouse-wide setting, available while handling is stopped; it does not switch with app profiles or write persistent DPI stages. Reconnect/profile changes may reset live DPI. Legacy `pointerSpeed` fields remain readable for profile compatibility but no longer affect movement.
 
 The original wired Naga Pro has separate explicit [onboard diagnostics](docs/research/wired-runtime.md): a read-only inspector and a bounded side-10/11 correction with private backups, readback and recovery. Neither runs automatically during builds or installation. This unit now reads back single-key `0`/`-` assignments; physical hold and reconnect verification are still pending.
 

@@ -12,6 +12,7 @@ func crc(_ bytes: [UInt8]) -> UInt8 { bytes[2..<88].reduce(0, ^) }
 func request(_ commandClass: UInt8, _ command: UInt8, _ arguments: [UInt8]) -> [UInt8] {
     // Closed allowlist, including exact argument lengths and query targets.
     let valid = (commandClass == 0 && command == 0x84 && arguments == [0, 0]) ||
+        (commandClass == 4 && command == 0x85 && arguments == [0, 0, 0, 0, 0, 0, 0]) ||
         (commandClass == 5 && command == 0x84 && arguments == [0]) ||
         (commandClass == 2 && command == 0x8c && arguments.count == 10 &&
          arguments[0] <= 5 && (0x40...0x4b).contains(arguments[1]) &&
@@ -84,6 +85,8 @@ let opened = IOHIDDeviceOpen(device, 0) // Shared; never seize input.
 guard opened == kIOReturnSuccess else { print("Shared open failed: \(opened). No request sent."); exit(2) }
 defer { IOHIDDeviceClose(device, 0) }
 do {
+    let dpi = try query(device, 4, 0x85, [0, 0, 0, 0, 0, 0, 0])
+    print("LIVE_DPI x=\(Int(dpi[9]) << 8 | Int(dpi[10])) y=\(Int(dpi[11]) << 8 | Int(dpi[12]))")
     let mode = try query(device, 0, 0x84, [0, 0])
     print("MODE args=\(hex(Array(mode[8..<10])))")
     let active = try query(device, 5, 0x84, [0])
@@ -101,7 +104,7 @@ do {
             print("BINDING profile=\(bank) side=\(Int(slot)-0x40+1) storedLayer=\(response[10]) block=\(hex(Array(response[11..<18])))")
         }
     }
-    print("FINISHED: only device-mode, active-profile and button GET queries sent.")
+    print("FINISHED: only live DPI, device-mode, active-profile and button GET queries sent.")
 } catch {
     print("STOPPED: \(error). No settings write or profile selection attempted.")
     exit(3)

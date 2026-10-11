@@ -66,7 +66,7 @@ struct ContentView: View {
                         switch tab {
                         case .buttons: ButtonsView(profile: profile)
                         case .wheel: WheelView(profile: profile)
-                        case .cursor: CursorView(profile: profile)
+                        case .cursor: CursorView(sensitivity: model.sensitivity)
                         case .chords: ChordsView(profile: profile)
                         case .device: DevicesView(model: model, catalog: model.devices)
                         }
@@ -346,22 +346,39 @@ private struct SpeedSlider: View {
 }
 
 private struct CursorView: View {
-    @Binding var profile: MouseProfile
+    @ObservedObject var sensitivity: NagaSensitivity
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             Text("Find your pace").font(.title2.weight(.semibold))
-            GroupBox("Pointer") {
+            GroupBox("Wired Naga Pro sensitivity") {
                 VStack(alignment: .leading, spacing: 18) {
-                    SpeedSlider(title: "Speed", value: $profile.pointerSpeed, range: 0.25...4)
+                    Text("Lower DPI moves the pointer less. Higher DPI moves it farther.").font(.callout)
+                    Slider(value: $sensitivity.requestedDPI, in: 100...20000, step: 100)
+                        .accessibilityLabel("Mouse sensitivity in DPI")
                     HStack {
-                        Text("1× keeps your current tracking speed.").font(.caption).foregroundStyle(.secondary)
+                        Text("DPI")
+                        TextField("DPI", value: $sensitivity.requestedDPI, format: .number.precision(.fractionLength(0)))
+                            .textFieldStyle(.roundedBorder).frame(width: 100)
+                        ForEach([800, 1600, 3200], id: \.self) { dpi in
+                            Button("\(dpi)") { sensitivity.requestedDPI = Double(dpi) }
+                        }
                         Spacer()
-                        Button("Reset") { profile.pointerSpeed = 1 }.controlSize(.small)
                     }
+                    HStack {
+                        Button("Read from mouse", action: sensitivity.refresh)
+                        Button("Apply to mouse", action: sensitivity.apply).buttonStyle(.borderedProminent)
+                            .disabled(sensitivity.current == nil)
+                        Button("Restore previous DPI", action: sensitivity.restore)
+                            .disabled(!sensitivity.canRestore)
+                    }
+                    Text(sensitivity.message).font(.callout).foregroundStyle(.secondary)
                 }.padding(14)
+                    .disabled(sensitivity.busy)
             }
-            Text("Pointer speed scales movement on top of macOS tracking. It does not replace the system acceleration curve.").font(.callout).foregroundStyle(.secondary)
+            Text("Apply changes the connected USB mouse for all applications, even while button handling is stopped. This live setting may reset when you reconnect or change the mouse's onboard profile. Bluetooth and receiver sensitivity control is not available yet.")
+                .font(.callout).foregroundStyle(.secondary)
         }
+        .onAppear { sensitivity.refresh() }
     }
 }
 
