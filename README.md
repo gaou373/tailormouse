@@ -38,7 +38,7 @@ Unassigned Naga side buttons use **No action** while running, preventing uninten
 
 Settings live separately at `~/Library/Application Support/TailorMouse/profiles.json`. Application profiles initially copy the default profile, then keep their own settings. Import replaces TailorMouse profiles after backing up the previous file; it does not import SteerMouse formats.
 
-Transport calibration is stored separately from action profiles in `nagaKeyboardLayouts`. It supports individual key overrides, captured two-key onboard sequences, and their calibrated double-click prefixes. Prefix recognition delays ordinary left clicks on that calibrated Naga connection by up to 12 ms; unmatched clicks replay normally. The Device tab can restore the standard layout. A local `runtime-status.json` snapshot provides status and aggregate Naga transition counts without recording ordinary keyboard input.
+Transport calibration is stored separately from action profiles in `nagaKeyboardLayouts`. It supports individual key overrides, captured two-key onboard sequences, and their calibrated double-click prefixes. Prefix recognition delays ordinary left clicks on that calibrated Naga connection by up to 12 ms; unmatched clicks replay normally. The Device tab can restore the standard layout after the mouse itself emits standard single-key assignments. That control changes TailorMouse calibration only; it does not reprogram onboard mouse profiles. A local `runtime-status.json` snapshot provides status and aggregate Naga transition counts without recording ordinary keyboard input.
 
 ## Research
 
