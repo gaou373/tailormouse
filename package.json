@@ -1,0 +1,16 @@
+{
+  "name": "tailormouse",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Original macOS mouse customization app and SteerMouse investigation using REA",
+  "license": "UNLICENSED",
+  "scripts": {
+    "research": "node scripts/research.mjs",
+    "rea": "rea",
+    "build:app": "bash scripts/build-app.sh",
+    "test": "swift test"
+  },
+  "devDependencies": {
+    "rea-agents": "6.4.0"
+  }
+}
