@@ -1,6 +1,6 @@
 # SteerMouse / Naga Pro investigation
 
-Priority: reverse engineer SteerMouse itself before any fixes or customization. The Naga Pro twelve-button and cross-transport profile issues are motivating questions, not the current implementation task. Further settings changes and custom app development are deferred.
+The initial milestone investigated SteerMouse before fixes or customization. The user subsequently requested an original recreation and installation on 2026-10-11. TailorMouse implements common customization controls; [implementation details and limits](../implementation.md) distinguish its behavior from the target. These research findings remain static evidence, rather than proof of hardware compatibility.
 
 Target: installed SteerMouse 5.8(0920), `/Applications/SteerMouse.app`. REA npm package is pinned to 6.4.0. The supplied upstream repository was inspected at commit `3ad5782dfdc8864879a887dc63fef682ffeb5839`.
 

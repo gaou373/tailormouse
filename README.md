@@ -1,26 +1,42 @@
 # TailorMouse
 
-Personal macOS mouse research project using [REA](https://github.com/morluto/rea) to reverse engineer the installed SteerMouse app. The current scope is understanding its architecture and implementation before fixing or customizing anything. The motivating requirements are Razer Naga Pro 12-button support and one profile shared across Bluetooth, wired and dongle connections.
+An independently written macOS mouse customization app, informed by an evidence-based investigation of [SteerMouse](docs/research/README.md) using [REA](https://github.com/morluto/rea). TailorMouse has its own Swift source, interface, icon and JSON profiles. It contains no SteerMouse executable, assets, registration logic or imported preferences.
 
-The first confirmed issue was a conflicting Razer HID driver. It was disabled reversibly, and SteerMouse now reports the Bluetooth Naga as available. Physical button tests and cross-transport profile sharing are still pending. See the [investigation and evidence log](docs/research/README.md).
+## Features
+
+- Default and application-specific profiles, with import/export.
+- Twelve Naga Pro side-button slots, ordinary mouse buttons and modifier-specific mappings.
+- Preset actions, recorded keyboard shortcuts, mouse clicks and scroll actions.
+- Side-button chords with paired press/release routing and recovery.
+- Separate horizontal/vertical wheel speed and direction controls.
+- Pointer-speed scaling and device discovery.
+- One Naga Pro family across Bluetooth, wired USB and the wireless receiver.
+- Explicit Start/Stop and a menu-bar Stop control. Input handling starts stopped.
+
+This is an initial functional recreation of common controls, not full SteerMouse parity. Physical Naga buttons still require testing on every transport. The current processor handles events macOS exposes; it cannot recover buttons whose reports never become events or initialize vendor-specific firmware. Pointer scaling operates above macOS tracking rather than replacing its acceleration curve. See [implementation and validation](docs/implementation.md).
+
+## Build and install
+
+Requires macOS 13+, Swift and Xcode command-line tools. Scripts prefer full Xcode when available.
+
+```sh
+npm ci
+npm test
+npm run build:app
+npm run install:app
+```
+
+Build output: `.local/build/TailorMouse.app`. Installation copies an ad hoc signed local build to `/Applications/TailorMouse.app` and backs up an existing copy locally. Quit TailorMouse before installing an update.
+
+Open TailorMouse, configure mappings, then press **Start** when ready. Active handling requires Accessibility and Input Monitoring permission. The app checks permissions and refuses to start while SteerMouse Manager runs; it never quits that manager. Builds, tests and installation do not enable handling, grant permissions or add login items.
+
+Settings live separately at `~/Library/Application Support/TailorMouse/profiles.json`. Application profiles initially copy the default profile, then keep their own settings. Import replaces TailorMouse profiles after backing up the previous file; it does not import SteerMouse formats.
 
 ## Research
 
 ```sh
-npm ci
 npm run research
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun swift scripts/hid-inventory.swift
 ```
 
-REA is pinned in `package-lock.json`. Raw analysis stays in `.local/evidence/` and is not uploaded. The repository contains independently written code and research notes, not SteerMouse binaries, assets or user settings.
-
-## Original app starter
-
-A disabled-by-default SwiftUI starter was created before the scope was clarified. It includes default/app-specific profiles, discrete wheel inversion/speed, side-button shortcut actions and explicit Start/Stop controls. It is **not a Naga Pro twelve-button fix** and is not activated. Further app development is deferred until reverse engineering is reviewed.
-
-```sh
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun swift test
-npm run build:app
-```
-
-Build output: `.local/build/TailorMouse.app`. Builds and tests do not activate interception. The app refuses to enable while SteerMouse Manager runs. Its preferences live separately in Application Support/TailorMouse. Current input routing uses a session event tap and cannot attribute events to a specific physical mouse; Naga panel support needs device-specific HID handling first.
+`rea-agents` is pinned to 6.4.0. Raw evidence stays in ignored `.local/evidence/`. Research notes distinguish static observations, inferred behavior and unanswered hardware questions. No proprietary binaries, user settings, account data or decompiler databases are uploaded.
