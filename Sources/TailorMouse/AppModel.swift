@@ -163,6 +163,7 @@ final class AppModel: ObservableObject {
             "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development",
             "isRunning": isRunning, "status": status, "lastInput": lastInput,
             "connectionCount": devices.connections.count,
+            "bluetoothRawEndpointCount": interceptor.bluetoothEndpointCount,
             "sideButtonDownEvents": sideButtonDownEvents, "sideButtonUpEvents": sideButtonUpEvents,
             "mouseButtonDownEvents": mouseButtonDownEvents, "mouseButtonUpEvents": mouseButtonUpEvents,
             "lastSideButtonPress": lastSideButtonPress, "lastSideButtonRelease": lastSideButtonRelease,

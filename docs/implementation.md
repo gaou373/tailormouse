@@ -1,8 +1,10 @@
 # TailorMouse 0.2 implementation and validation
 
-Version 0.2.5 removes the cursor-warp correction after physical use of 0.2.4 caused difficult movement and slider dragging. Native movement passes through untouched. A separate explicit USB DPI control backs up, writes, reads back and recovers the original wired Naga Pro's live sensitivity. A runtime check using the same transport code verified 3200 → 1600 → 3200 DPI and unchanged persisted DPI. All 53 tests pass; physical comfort with the replacement UI and fresh side-button holds remains pending.
+Version 0.2.5 removes the cursor-warp correction after physical use of 0.2.4 caused difficult movement and slider dragging. Native movement passes through untouched. A separate explicit USB DPI control backs up, writes, reads back and recovers the original wired Naga Pro's live sensitivity. A runtime check using the same transport code verified 3200 → 1600 → 3200 DPI and unchanged persisted DPI. All 62 tests pass; physical comfort with the replacement UI and fresh side-button holds remains pending.
 
 Version 0.2.6 replaces the sidebar layout with a compact dark tabbed window based on the user's screenshots. The top row contains Start/Stop, profile selection, Edit and device selection. Button assignments use eight ordinary-button rows, two six-button side-panel pages and an additional-button menu. The modifier strip chooses mappings, and a separate editor keeps edits in a local draft until OK; Cancel discards them. Default restoration and inherited modifier mappings remain available. Other tabs retain wheel, chord, USB DPI, calibration and input activity controls. The first launch adopts a 680×510 content size before preserving future user resizing. The mouse illustration is independently drawn vector artwork. No input engine or profile schema changed. A separate AppKit renderer uses an in-memory preview model and exports ignored PNGs without reading/writing user settings, runtime status, activating interception or writing hardware.
+
+Version 0.2.7 adds direct original-Naga Bluetooth side-button input after HID reports were observed without Quartz keyboard events. The [Bluetooth report investigation](research/bluetooth-runtime.md) documents scope, capture replay, deduplication, matched holds and recovery. The listener is active only after Start and uses shared device access; discovery itself stays metadata-only.
 
 The user requested an original recreation and installation after the static research milestone. This document describes TailorMouse behavior, not recovered SteerMouse source or verified feature parity.
 
@@ -17,7 +19,7 @@ The target helper SHA-256 is `b2070391939b6f3f5431cb3fc1c7d89040b5a667ab89917cb6
 | Razer report callback dispatches changed button presses and releases | `INPUT-01`, same hash-pinned input report | Independent router snapshots down mappings and handles matching up/drag; no copied report parser or vendor initialization |
 | Compiled profiles use application matching | `INPUT-06`; REA UI graph `ev_b67425e6ce1700aa3d666cbca72bbd1e0bc65128033196775eb24c11fab83eb5` | Bundle-identifier lookup and original Codable JSON schema |
 
-These observations support design choices but do not establish that field 87 is stable or that TailorMouse receives every physical button. The app's keyboard translator covers original Naga number-row and numpad default mappings only for positively identified Naga senders. An unrelated keyboard is never translated. Unknown senders pass through in the default Naga mode.
+These observations support design choices but do not establish that field 87 is stable or that TailorMouse receives every physical button. The app's keyboard translator covers original Naga number-row and numpad default mappings only for positively identified Naga senders or exact original-Naga Bluetooth report endpoints. An unrelated keyboard is never translated. Unknown senders pass through in the default Naga mode.
 
 ## Implemented behavior
 
@@ -35,7 +37,7 @@ The visual preview can be reproduced with `bash scripts/render-ui.sh`; outputs a
 
 ## Validation and remaining acceptance work
 
-Repository `swift test` passes all 53 tests on this Mac. Coverage includes twelve Naga logical buttons in both default key banks, identity aliases, migration, configuration round trips, modifier fallback, matched down/up/drag across edits, repeats, chord snapshots, unmatched-prefix recovery, source isolation, reset, scrolling fractions, finite legacy speed limits, live-DPI packet validation, write bounds, backup-before-write ordering, no-op behavior, landed-write recovery and failed-recovery reporting. Diagnostic self-checks additionally validate read/write framing, reverse-order recovery after a simulated landed-write failure, no-op writes and private backup serialization without opening devices. Release packaging uses the host architecture and an ad hoc signature.
+Repository `swift test` passes all 62 tests on this Mac. Coverage includes twelve Naga logical buttons in both default key banks, identity aliases, migration, configuration round trips, modifier fallback, matched down/up/drag across edits, repeats, chord snapshots, unmatched-prefix recovery, source isolation, reset, scrolling fractions, finite legacy speed limits, live-DPI packet validation, write bounds, backup-before-write ordering, no-op behavior, landed-write recovery and failed-recovery reporting. Diagnostic self-checks additionally validate read/write framing, reverse-order recovery after a simulated landed-write failure, no-op writes and private backup serialization without opening devices. Release packaging uses the host architecture and an ad hoc signature.
 
 Metadata enumeration identified the attached Bluetooth Razer Naga Pro and its event-service candidates. This validates discovery only. UI and installation checks leave processing stopped; active physical-input checks are intentionally pending:
 
@@ -45,4 +47,4 @@ Metadata enumeration identified the attached Bluetooth Razer Naga Pro and its ev
 4. Verify wheel direction/speed, native pointer movement and slider dragging with handling stopped and Running. Apply two distinct USB DPI values, confirm a physical difference, and verify Restore. Confirm Stop restores button pass-through.
 5. Confirm no duplicate actions, unexpected typing, permission-loss capture or resumed interception after tap disable.
 
-Vendor-specific raw HID report decoding, automatic hardware initialization, button reports absent from macOS, acceleration curves, smooth-scroll synthesis, held-action dragging, SteerMouse-format import and complete target parity are not implemented. The original Bluetooth 10–12 and USB/dongle hardware issues are not claimed fixed.
+Raw report decoding beyond original Naga Bluetooth keyboard report 6, automatic hardware initialization, button reports absent from macOS, acceleration curves, smooth-scroll synthesis, held-action dragging, SteerMouse-format import and complete target parity are not implemented. The original Bluetooth 10–12 and USB/dongle hardware issues are not claimed fixed.

@@ -13,6 +13,8 @@ final class MouseInterceptor {
     private let senderField = CGEventField(rawValue: 87)!
     private var keyboardToken: UInt64 = 0
     private var requestedAccessibilityApproval = false
+    private let bluetoothInput = BluetoothNagaInput()
+    var bluetoothEndpointCount: Int { bluetoothInput.endpointCount }
     var configuration: () -> ProfileConfiguration = { ProfileConfiguration() }
     var devices: () -> [DetectedDevice] = { [] }
     var stopped: (String) -> Void = { _ in }
@@ -32,6 +34,9 @@ final class MouseInterceptor {
         var wheel = WheelTransformer()
         var origins: [Int: CGEvent] = [:]
         var keyboard = NagaKeyboardDecoder()
+        var bluetoothReports = NagaBluetoothReportDecoder()
+        var rawKeyboardTokens: Set<UInt64> = []
+        var rawPassthroughKeys = NagaPostedKeyTracker()
         var keyboardEvents: [UInt64: CGEvent] = [:]
         var keyboardReplayKeys: [Int: [UInt16]] = [:]
         var keyboardWork: DispatchWorkItem?
@@ -86,6 +91,25 @@ final class MouseInterceptor {
         tap = newTap; source = runLoopSource; states.removeAll()
         CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: newTap, enable: true)
+        bluetoothInput.report = { [weak self] id, reportID, bytes in self?.handleBluetooth(id, reportID: reportID, bytes: bytes) }
+        bluetoothInput.baseline = { [weak self] id, bytes in
+            guard let self, let device = self.devices().first(where: { $0.id == id }) ?? self.bluetoothInput.identity(id) else { return }
+            let state = self.states[device.connectionID] ?? InputState()
+            self.states[device.connectionID] = state
+            state.bluetoothReports.prime(reportID: 6, bytes: bytes)
+        }
+        bluetoothInput.removed = { [weak self] id in
+            guard let self else { return }
+            // The catalog may already have refreshed; connection IDs are
+            // retained independently for exact endpoint removal.
+            if let connection = self.bluetoothConnections.removeValue(forKey: id), let state = self.states.removeValue(forKey: connection) {
+                self.releaseRawPassthrough(state)
+            }
+        }
+        bluetoothInput.failed = { [weak self] message in
+            DispatchQueue.main.async { self?.stop(); self?.stopped(message) }
+        }
+        if configuration().selectedDeviceFamily == nil || configuration().selectedDeviceFamily == "razer.naga.pro" { bluetoothInput.refresh() }
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             guard let self else { return }
             if Self.steerMouseIsRunning {
@@ -95,8 +119,9 @@ final class MouseInterceptor {
             } else {
                 let present = Set(self.devices().map { $0.connectionID })
                 for id in Array(self.states.keys) where !id.hasPrefix("unknown.") && !present.contains(id) {
-                    self.states.removeValue(forKey: id)
+                    if let state = self.states.removeValue(forKey: id) { self.releaseRawPassthrough(state) }
                 }
+                if self.configuration().selectedDeviceFamily == nil || self.configuration().selectedDeviceFamily == "razer.naga.pro" { self.bluetoothInput.refresh() }
             }
         }
         return nil
@@ -104,6 +129,8 @@ final class MouseInterceptor {
 
     func stop() {
         timer?.invalidate(); timer = nil
+        bluetoothInput.stop(); bluetoothConnections.removeAll()
+        for state in states.values { releaseRawPassthrough(state) }
         if let tap { CGEvent.tapEnable(tap: tap, enable: false); CFMachPortInvalidate(tap) }
         if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
         source = nil; tap = nil; states.removeAll()
@@ -127,6 +154,14 @@ final class MouseInterceptor {
         if keyboard {
             // Keyboard translation is confined to positively identified original Naga endpoints.
             guard device?.identity.canonicalFamily == "razer.naga.pro" else { return Unmanaged.passUnretained(event) }
+            if let device, bluetoothInput.owns(device.id) {
+                let layout = config.nagaKeyboardLayouts[device.identity.transport] ?? NagaKeyboardLayout()
+                let key = UInt16(clamping: event.getIntegerValueField(.keyboardEventKeycode))
+                // Raw reports own these keys on Bluetooth. If macOS resumes
+                // emitting their Quartz events, consume them to avoid a second
+                // action or duplicate native Passthrough output.
+                if NagaBluetoothReportDecoder.handles(keyCode: key, layout: layout) { return nil }
+            }
         }
         if let family = config.selectedDeviceFamily {
             guard device?.identity.canonicalFamily == family else {
@@ -211,10 +246,11 @@ final class MouseInterceptor {
     }
 
     private func handleKeyboard(_ type: CGEventType, _ event: CGEvent, state: InputState,
-        device: DetectedDevice, profile: MouseProfile, layout: NagaKeyboardLayout, prelude: MousePrelude?) -> Unmanaged<CGEvent>? {
+        device: DetectedDevice, profile: MouseProfile, layout: NagaKeyboardLayout, prelude: MousePrelude?, fromRaw: Bool = false) -> Unmanaged<CGEvent>? {
         keyboardToken &+= 1
         let token = keyboardToken
         state.keyboardEvents[token] = event.copy()
+        if fromRaw { state.rawKeyboardTokens.insert(token) }
         if let prelude { state.keyboardPreludes[token] = prelude }
         let input = NagaKeyboardInput(token: token, keyCode: UInt16(clamping: event.getIntegerValueField(.keyboardEventKeycode)),
             phase: type == .keyDown ? .down : .up, modifiers: modifierMask(event.flags), profile: profile)
@@ -249,7 +285,13 @@ final class MouseInterceptor {
             if !decision.suppress {
                 if firstDown { for original in state.keyboardMouseReplay[input.button] ?? [] { post(original.event) } }
                 for token in input.nativeTokens {
-                    if let native = state.keyboardEvents[token] { post(native) }
+                    if let native = state.keyboardEvents[token] {
+                        if state.rawKeyboardTokens.contains(token) {
+                            let key = UInt16(clamping: native.getIntegerValueField(.keyboardEventKeycode))
+                            state.rawPassthroughKeys.posted(keyCode: key, phase: native.type == .keyDown ? .down : .up)
+                        }
+                        post(native)
+                    }
                 }
             }
             let detail = decision.suppress ? "handled" : "passthrough"
@@ -263,7 +305,39 @@ final class MouseInterceptor {
         }
         let retained = state.keyboard.retainedTokens
         state.keyboardEvents = state.keyboardEvents.filter { retained.contains($0.key) }
+        state.rawKeyboardTokens.formIntersection(retained)
         state.keyboardPreludes = state.keyboardPreludes.filter { retained.contains($0.key) }
+    }
+
+    private var bluetoothConnections: [UInt64: String] = [:]
+    private func handleBluetooth(_ id: UInt64, reportID: UInt32, bytes: [UInt8]) {
+        guard tap != nil, let device = devices().first(where: { $0.id == id }) ?? bluetoothInput.identity(id),
+              device.identity.canonicalFamily == "razer.naga.pro" else { return }
+        let config = configuration()
+        guard config.selectedDeviceFamily == nil || config.selectedDeviceFamily == device.identity.canonicalFamily else { return }
+        bluetoothConnections[id] = device.connectionID
+        let state = states[device.connectionID] ?? InputState(); states[device.connectionID] = state
+        let layout = config.nagaKeyboardLayouts[device.identity.transport] ?? NagaKeyboardLayout()
+        let profile = config.profile(for: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
+        for input in state.bluetoothReports.route(reportID: reportID, bytes: bytes) {
+            guard NagaBluetoothReportDecoder.handles(keyCode: input.keyCode, layout: layout),
+                  let event = CGEvent(keyboardEventSource: nil, virtualKey: input.keyCode, keyDown: input.phase == .down) else { continue }
+            var flags = CGEventSource.flagsState(.combinedSessionState)
+            if input.modifiers.contains(.command) { flags.insert(.maskCommand) }
+            if input.modifiers.contains(.shift) { flags.insert(.maskShift) }
+            if input.modifiers.contains(.option) { flags.insert(.maskAlternate) }
+            if input.modifiers.contains(.control) { flags.insert(.maskControl) }
+            event.flags = flags
+            event.location = CGEvent(source: nil)?.location ?? .zero
+            _ = handleKeyboard(input.phase == .down ? .keyDown : .keyUp, event, state: state,
+                device: device, profile: profile, layout: layout, prelude: nil, fromRaw: true)
+        }
+    }
+    private func releaseRawPassthrough(_ state: InputState) {
+        for key in state.rawPassthroughKeys.takeReleases() {
+            guard let up = CGEvent(keyboardEventSource: nil, virtualKey: key, keyDown: false) else { continue }
+            up.flags = CGEventSource.flagsState(.combinedSessionState); post(up)
+        }
     }
 
     private func replayMouseInputs(_ events: [RecordedMouseInput]) {

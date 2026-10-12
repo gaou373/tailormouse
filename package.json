@@ -1,6 +1,6 @@
 {
   "name": "tailormouse",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "private": true,
   "description": "Original macOS mouse customization app and SteerMouse investigation using REA",
   "license": "UNLICENSED",
