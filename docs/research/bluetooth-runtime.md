@@ -22,3 +22,9 @@ All 62 Swift tests pass, including nine added report/route/recovery cases. The c
 
 
 Installed 0.2.7 build 9 passed strict code-signature verification and reopened with handling stopped. Executable SHA-256: `4a469493c89bf776e225544f048326708667794c9fd0374568157e2044aa31d8`. Saved profile JSON content was unchanged. The latest-only runtime snapshot now includes `bluetoothRawEndpointCount`, without recording ordinary keyboard history. User Start and physical action verification remain pending.
+
+## Permission refresh and installed activity
+
+The subsequent Start attempt reported that macOS had not approved the changed build. The user explicitly requested that the assistant refresh TailorMouse's entries after future installations. Native System Settings UI was available for this step: the installed `/Applications/TailorMouse.app` was added to Accessibility and verified enabled; its Input Monitoring entry was removed, the installed copy re-added and verified enabled, and the OS Quit & Reopen action was accepted. Other apps' permissions were unchanged. No TCC database was edited, no build/test activated handling, and no signing certificate/trust configuration was created.
+
+After the user started handling, the installed 0.2.7 snapshot reported Running, one Bluetooth raw endpoint, and matched down/up activity for sides 1–3 and 5–12, including 10, 11 and 12. This corroborates restored side-button detection in the deployed raw-reader path. Side 4 was present in the earlier capture replay but had no transition in this latest snapshot. This observation does not establish every mapped action's behavior or persistence after reconnect. Runtime snapshots remain private and ignored; existing target hashes and REA evidence context are unchanged.
