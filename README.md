@@ -10,7 +10,8 @@ An independently written macOS mouse customization app, informed by an evidence-
 - Preset actions, recorded keyboard shortcuts, mouse clicks and scroll actions.
 - Side-button chords with paired press/release routing and recovery.
 - Separate horizontal/vertical wheel speed and direction controls.
-- Live native acceleration and sensitivity sliders, with original tracking restored on Stop.
+- Live native acceleration and sensitivity sliders with numeric controls, with original tracking restored on Stop.
+- Wired Naga Pro hardware DPI slider with verified writes, backups and Restore.
 - Ordered action categories, roll-direction assignments and physical modifier highlighting.
 - Read-only button identification while hovering over the mouse illustration.
 - Device discovery.
@@ -46,7 +47,7 @@ Transport calibration is stored separately from action profiles in `nagaKeyboard
 
 Version 0.2.8 implements [Fix Request 1](docs/fix-request-1.md). Wheel speed sits above Roll Up/Down assignments (or Left/Right). Hold ⌘, ⇧, ⌥ or ⌃ to highlight the modifier strip and select that mapping. Hover over the mouse illustration and press a mouse button to identify its row without activating remapping. The editor groups commands into Click, Scroll, Keyboard Shortcut, System Control, Zoom, Mission Control, Music Control, Application Switcher, Cursor Snapping, Open and No Action.
 
-Cursor has live Acceleration and Sensitivity sliders; there is no Apply button. Settings take effect while Running and follow the active application profile. Sensitivity is a relative 0.25–4× multiplier on tracking captured at Start. Stop and normal quit restore those native parameters. Native pointer events are never rescaled or warped by the tracking engine. The backend requires a dynamically resolved macOS SPI; unsupported services stay disabled. Abrupt termination and another mouse manager changing the same parameters are limitations. Legacy `pointerSpeed` remains readable but inactive.
+Cursor has live Acceleration and Sensitivity sliders plus numeric fields and step controls; there is no Apply button. Version 0.2.9 refreshes native service snapshots after reconnect. The wired Naga DPI slider applies on release; enter a DPI and press Return or choose a preset. Read/Restore retain verified hardware backup and recovery. Hardware DPI is mouse-wide, independent of Start/Stop, and unavailable over Bluetooth/receiver. Settings take effect while Running and follow the active application profile. Sensitivity is a relative 0.25–4× multiplier on tracking captured at Start. Stop and normal quit restore those native parameters. Native pointer events are never rescaled or warped by the tracking engine. The backend requires a dynamically resolved macOS SPI; unsupported services stay disabled. Abrupt termination and another mouse manager changing the same parameters are limitations. Legacy `pointerSpeed` remains readable but inactive.
 
 The original wired Naga Pro has separate explicit [onboard diagnostics](docs/research/wired-runtime.md): a read-only inspector and a bounded side-10/11 correction with private backups, readback and recovery. Neither runs automatically during builds or installation. This unit now reads back single-key `0`/`-` assignments; physical hold and reconnect verification are still pending.
 

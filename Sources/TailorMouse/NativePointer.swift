@@ -11,7 +11,7 @@ final class NativePointer: ObservableObject {
     @Published private(set) var message = "Changes take effect while Running."
     @Published private(set) var systemAcceleration = 0.8
     @Published private(set) var supported = false
-    private let client = TMCreatePointerClient()
+    private var client: IOHIDEventSystemClient?
     private struct Saved { let service: IOHIDServiceClient; let values: NativePointerValues }
     private var saved: [UInt64: Saved] = [:]
     private var active = false
@@ -23,6 +23,9 @@ final class NativePointer: ObservableObject {
     private var signature: [UInt64: NativePointerValues] = [:]
 
     func services() -> [IOHIDServiceClient] {
+        // An unscheduled long-lived client can retain the pre-reconnect service
+        // inventory. Obtain a fresh read-only snapshot before resolving devices.
+        client = TMCreatePointerClient()
         guard let client else { return [] }
         let family = configuration().selectedDeviceFamily
         return ((IOHIDEventSystemClientCopyServices(client) as? [IOHIDServiceClient]) ?? []).filter { service in
@@ -52,7 +55,7 @@ final class NativePointer: ObservableObject {
     func inspect() {
         let available = services().compactMap { try? Self.read($0) }
         supported = !available.isEmpty
-        if let first = available.first { systemAcceleration = max(0, Double(first.acceleration) / 65536) }
+        if let first = available.first, !active { systemAcceleration = max(0, Double(first.acceleration) / 65536) }
         if !active { message = supported ? "Changes take effect while Running. Stop restores your original tracking." : "Connect a supported mouse to adjust tracking." }
     }
     func start() {
@@ -82,7 +85,11 @@ final class NativePointer: ObservableObject {
             }
             for service in available {
                 let id = Self.id(service)
-                if saved[id] == nil { saved[id] = Saved(service: service, values: try Self.read(service)) }
+                if saved[id] == nil {
+                    let values = try Self.read(service)
+                    saved[id] = Saved(service: service, values: values)
+                    systemAcceleration = max(0, Double(values.acceleration) / 65536)
+                }
                 guard let original = saved[id] else { continue }
                 let target = try original.values.target(profile: profile())
                 guard signature[id] != target else { continue }

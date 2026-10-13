@@ -33,7 +33,7 @@ final class AppModel: ObservableObject {
         selectedID = configuration.defaultProfile.id
         // UI rendering uses an isolated in-memory model. It never loads/saves
         // user settings, writes runtime status or starts input interception.
-        if preview { indicators.monitoringEnabled = false; return }
+        if preview { indicators.monitoringEnabled = false; sensitivity.hardwareEnabled = false; return }
         indicators.devices = { [weak self] in self?.devices.devices ?? [] }
         indicators.family = { [weak self] in self?.configuration.selectedDeviceFamily }
         indicators.beginModifiers()

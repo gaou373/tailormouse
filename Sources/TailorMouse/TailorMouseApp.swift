@@ -138,7 +138,7 @@ struct ContentView: View {
                                     switch tab {
                                     case .wheel: WheelView(profile: profile, indicators: model.indicators)
                                     case .chords: ChordsView(profile: profile)
-                                    case .cursor: CursorView(profile: profile, pointer: model.pointer)
+                                    case .cursor: CursorView(profile: profile, pointer: model.pointer, sensitivity: model.sensitivity)
                                     case .device: DevicesView(model: model, catalog: catalog)
                                     case .support: SupportView(model: model)
                                     case .buttons: EmptyView()
@@ -587,27 +587,64 @@ private struct SpeedSlider: View {
 private struct CursorView: View {
     @Binding var profile: MouseProfile
     @ObservedObject var pointer: NativePointer
+    @ObservedObject var sensitivity: NagaSensitivity
     var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
+        VStack(alignment: .leading, spacing: 10) {
             Text("Speed").font(.headline)
-            VStack(spacing: 22) {
-                HStack(spacing: 12) {
-                    Text("Acceleration").frame(width: 90, alignment: .trailing)
-                    Text(String(format: "%.2f", profile.pointerAcceleration ?? pointer.systemAcceleration)).monospacedDigit().frame(width: 48)
-                    Slider(value: Binding(get: { profile.pointerAcceleration ?? min(5, pointer.systemAcceleration) }, set: { profile.pointerAcceleration = ($0 * 100).rounded() / 100 }), in: 0...5)
-                }
-                HStack(spacing: 12) {
-                    Text("Sensitivity").frame(width: 90, alignment: .trailing)
-                    Text(String(format: "%.2f×", profile.pointerSensitivity ?? 1)).monospacedDigit().frame(width: 48)
-                    Slider(value: Binding(get: { profile.pointerSensitivity ?? 1 }, set: { profile.pointerSensitivity = ($0 * 100).rounded() / 100 }), in: 0.25...4)
-                }
+            VStack(spacing: 14) {
+                TrackingControl(title: "Acceleration", value: Binding(get: { profile.pointerAcceleration ?? min(5, pointer.systemAcceleration) }, set: { profile.pointerAcceleration = $0 }), range: 0...5)
+                TrackingControl(title: "Sensitivity", value: Binding(get: { profile.pointerSensitivity ?? 1 }, set: { profile.pointerSensitivity = $0 }), range: 0.25...4)
             }.disabled(!pointer.supported)
             Button("Restore System Tracking") { profile.pointerAcceleration = nil; profile.pointerSensitivity = nil }
             Text(pointer.message).font(.callout).foregroundStyle(.secondary)
             Divider()
-            Text("Changes are live while Running and follow your application profile. Sensitivity scales your current tracking speed. Stop restores the tracking captured when you started.")
+            Text("Hardware DPI · Wired Naga Pro").font(.headline)
+            HStack(spacing: 10) {
+                Text("DPI").frame(width: 90, alignment: .trailing)
+                TextField("DPI", value: $sensitivity.requestedDPI, format: .number.precision(.fractionLength(0)))
+                    .textFieldStyle(.roundedBorder).frame(width: 62).onSubmit { sensitivity.apply() }
+                Slider(value: Binding(get: { log2(max(100, sensitivity.requestedDPI)) }, set: {
+                    sensitivity.requestedDPI = min(20000, max(100, (pow(2, $0) / 100).rounded() * 100))
+                }), in: log2(100)...log2(20000), onEditingChanged: { editing in if !editing { sensitivity.apply() } })
+                    .accessibilityLabel("Hardware DPI")
+            }.disabled(sensitivity.busy || sensitivity.current == nil)
+            HStack {
+                Button("Read from mouse", action: sensitivity.refresh).disabled(sensitivity.busy)
+                Button("Restore previous DPI", action: sensitivity.restore).disabled(sensitivity.busy || !sensitivity.canRestore)
+                Spacer()
+                ForEach([800, 1600, 3200], id: \.self) { dpi in
+                    Button("\(dpi)") { sensitivity.requestedDPI = Double(dpi); sensitivity.apply() }
+                        .disabled(sensitivity.busy || sensitivity.current == nil)
+                }
+            }
+            Text(sensitivity.message).font(.caption).foregroundStyle(.secondary)
+            Text("DPI applies on slider release or Return. Wired USB only; Restore undoes DPI.")
                 .font(.caption).foregroundStyle(.secondary)
-        }.onAppear { pointer.inspect() }
+        }.onAppear { pointer.inspect(); sensitivity.refresh() }
+            .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in pointer.inspect() }
+    }
+}
+
+private struct TrackingControl: View {
+    let title: String
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    private var boundedValue: Binding<Double> {
+        Binding(get: { value }, set: { candidate in
+            guard candidate.isFinite else { return }
+            value = min(range.upperBound, max(range.lowerBound, (candidate * 100).rounded() / 100))
+        })
+    }
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(title).frame(width: 90, alignment: .trailing)
+            TextField(title, value: boundedValue, format: .number.precision(.fractionLength(2)))
+                .textFieldStyle(.roundedBorder).monospacedDigit().frame(width: 62)
+                .accessibilityLabel("\(title) value")
+            Slider(value: boundedValue, in: range).accessibilityLabel(title)
+            Stepper(title, value: boundedValue, in: range, step: 0.05)
+                .labelsHidden().accessibilityLabel("Adjust \(title)")
+        }
     }
 }
 

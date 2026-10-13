@@ -3,6 +3,23 @@ import XCTest
 
 final class FixRequestControlsTests: XCTestCase {
     private let baseline = NativePointerValues(resolution: 90112000, acceleration: 52429)
+    func testNeutralBluetoothTrackingDoesNotWriteNativeProperties() throws {
+        let bluetooth = NativePointerValues(resolution: 26214400, acceleration: 32768)
+        let target = try bluetooth.target(profile: MouseProfile())
+        var writes = 0
+        try NativePointerTransaction.apply(before: bluetooth, target: target, write: { _, _ in writes += 1 }, read: { bluetooth })
+        XCTAssertEqual(writes, 0)
+        XCTAssertEqual(target, bluetooth)
+    }
+    func testSensitivityDirectionAndAccelerationAreIndependentOnBluetooth() throws {
+        let bluetooth = NativePointerValues(resolution: 26214400, acceleration: 32768)
+        let slower = try bluetooth.target(profile: MouseProfile(pointerSensitivity: 0.8))
+        let faster = try bluetooth.target(profile: MouseProfile(pointerSensitivity: 1.2))
+        XCTAssertGreaterThan(slower.resolution, bluetooth.resolution)
+        XCTAssertLessThan(faster.resolution, bluetooth.resolution)
+        XCTAssertEqual(slower.acceleration, bluetooth.acceleration)
+        XCTAssertEqual(faster.acceleration, bluetooth.acceleration)
+    }
     func testRequestedCategoryOrderAndEveryExistingActionIsRepresented() {
         XCTAssertEqual(ActionCategory.allCases.map(\.rawValue), ["Click", "Scroll", "Keyboard Shortcut", "System Control", "Zoom", "Mission Control", "Music Control", "Application Switcher", "Cursor Snapping", "Open", "No Action"])
         for action in ButtonAction.allCases { XCTAssertTrue(ActionCategory.category(for: action).actions.contains(action)) }

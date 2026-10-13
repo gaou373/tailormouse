@@ -80,6 +80,7 @@ final class NagaDPISession {
 }
 
 final class NagaSensitivity: ObservableObject {
+    var hardwareEnabled = true
     @Published var requestedDPI = 3200.0
     @Published private(set) var current: NagaDPI?
     @Published private(set) var busy = false
@@ -93,7 +94,7 @@ final class NagaSensitivity: ObservableObject {
         .appendingPathComponent("TailorMouse/Hardware Backups", isDirectory: true)
 
     func refresh() {
-        guard !busy else { return }
+        guard hardwareEnabled, !busy else { return }
         busy = true; message = "Reading USB sensitivity…"
         queue.async { [weak self] in
             do {
@@ -125,7 +126,7 @@ final class NagaSensitivity: ObservableObject {
         change(to: previous, restoring: true)
     }
     private func change(to target: NagaDPI, restoring: Bool) {
-        guard !busy, current != nil, let expectedID = deviceID else { return }
+        guard hardwareEnabled, !busy, current != nil, let expectedID = deviceID else { return }
         let expectedApplied = applied
         busy = true; message = "Applying and verifying USB sensitivity…"
         let backups = backups
