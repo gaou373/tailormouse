@@ -31,6 +31,8 @@ struct TailorMouseUIRender {
         try render(ContentView(model: model), size: NSSize(width: 680, height: 510), to: output.appendingPathComponent("buttons-modifiers.png"))
         try render(ContentView(model: model, tabName: "Wheel"), size: NSSize(width: 680, height: 510), to: output.appendingPathComponent("wheel.png"))
         try render(ContentView(model: model, tabName: "Cursor"), size: NSSize(width: 680, height: 510), to: output.appendingPathComponent("cursor.png"))
+        model.configuration.defaultProfile.chords = [ChordBinding(buttons: [0,2], binding: ActionBinding(action: .shortcut, shortcut: Shortcut(keyCode:36)))]
+        try render(ContentView(model: model, tabName: "Chords"), size: NSSize(width:680,height:510), to: output.appendingPathComponent("chords.png"))
     }
     private static func render<V: View>(_ view: V, size: NSSize, to url: URL) throws {
         let host = NSHostingView(rootView: view)

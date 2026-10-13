@@ -151,6 +151,7 @@ final class AppModel: ObservableObject {
     }
 
     func start() {
+        if indicators.recording { indicators.cancelRecording() }
         devices.refresh()
         if let error = interceptor.start() { status = error; writeRuntimeStatus(); return }
         isRunning = true
@@ -164,6 +165,7 @@ final class AppModel: ObservableObject {
         writeRuntimeStatus()
     }
     func stop() {
+        if indicators.recording { indicators.cancelRecording() }
         interceptor.stop()
         pointer.stop()
         isRunning = false

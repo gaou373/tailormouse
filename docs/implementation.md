@@ -37,7 +37,7 @@ The visual preview can be reproduced with `bash scripts/render-ui.sh`; outputs i
 
 ## Validation and remaining acceptance work
 
-Repository `swift test` passes all 84 tests on this Mac. Coverage includes twelve Naga logical buttons in both default key banks, identity aliases, migration, configuration round trips, modifier fallback, matched down/up/drag across edits, repeats, chord snapshots, unmatched-prefix recovery, source isolation, reset, scrolling fractions, finite legacy speed limits, live-DPI packet validation, write bounds, backup-before-write ordering, no-op behavior, landed-write recovery and failed-recovery reporting. Diagnostic self-checks additionally validate read/write framing, reverse-order recovery after a simulated landed-write failure, no-op writes and private backup serialization without opening devices. Release packaging uses the host architecture and an ad hoc signature.
+Repository `swift test` passes all 94 tests on this Mac. Coverage includes twelve Naga logical buttons in both default key banks, identity aliases, migration, configuration round trips, modifier fallback, matched down/up/drag across edits, repeats, chord snapshots, unmatched-prefix recovery, source isolation, reset, scrolling fractions, finite legacy speed limits, live-DPI packet validation, write bounds, backup-before-write ordering, no-op behavior, landed-write recovery and failed-recovery reporting. Diagnostic self-checks additionally validate read/write framing, reverse-order recovery after a simulated landed-write failure, no-op writes and private backup serialization without opening devices. Release packaging uses the host architecture and an ad hoc signature.
 
 Metadata enumeration identified the attached Bluetooth Razer Naga Pro and its event-service candidates. This validates discovery only. UI and installation checks leave processing stopped; active physical-input checks are intentionally pending:
 
@@ -50,3 +50,5 @@ Metadata enumeration identified the attached Bluetooth Razer Naga Pro and its ev
 Raw report decoding beyond original Naga Bluetooth keyboard report 6, automatic hardware initialization, button reports absent from macOS, custom acceleration curves, smooth-scroll synthesis, held-action dragging, SteerMouse-format import and complete target parity are not implemented. The original Bluetooth 10–12 and USB/dongle hardware issues are not claimed fixed.
 
 Version 0.3.0 implements [Fix Request 2](fix-request-2.md): grouped manual hotkey selection, F1–F24 representation with explicit extended-key compatibility limits, and observed-only ordinary button rows. Existing profiles and native tracking/DPI behavior are preserved.
+
+Version 0.3.1 adds [clear chord selectors and button recording](chord-recording.md), including primary-click chords with matched native releases and no duplicate fallback click.

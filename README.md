@@ -8,7 +8,7 @@ An independently written macOS mouse customization app, informed by an evidence-
 - Default and application-specific profiles, with import/export.
 - Twelve Naga Pro side-button slots, ordinary mouse buttons and modifier-specific mappings.
 - Preset actions, recorded or dropdown-selected keyboard shortcuts (F1–F24), mouse clicks and scroll actions.
-- Side-button chords with paired press/release routing and recovery.
+- Mouse-button chords with clear click names, per-button recording, paired routing and recovery.
 - Separate horizontal/vertical wheel speed and direction controls.
 - Live native acceleration and sensitivity sliders with numeric controls, with original tracking restored on Stop.
 - Wired Naga Pro hardware DPI slider with verified writes, backups and Restore.
@@ -61,3 +61,5 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun swift scripts/hid
 ```
 
 `rea-agents` is pinned to 6.4.0. Raw evidence stays in ignored `.local/evidence/`. Research notes distinguish static observations, inferred behavior and unanswered hardware questions. No proprietary binaries, user settings, account data or decompiler databases are uploaded.
+
+In **Chords**, choose Left/Right/Middle Click directly or use the Side buttons submenu. **Record** beside First or Second identifies a physical press and release from your selected mouse. Recording stops handling; press Start to resume afterward. Escape or Cancel abandons the capture. See [recording behavior and validation](docs/chord-recording.md).

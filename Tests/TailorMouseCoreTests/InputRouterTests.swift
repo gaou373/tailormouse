@@ -84,7 +84,7 @@ final class InputRouterTests: XCTestCase {
         XCTAssertEqual(mismatch.emissions.map { $0.binding.action }, [.paste])
         XCTAssertTrue(router.route(button: 100, phase: .up, profile: profile).suppress)
     }
-    func testPassthroughPrefixReplaysCompleteClickAndInvalidPrimaryChordIgnored() {
+    func testPassthroughPrefixReplaysCompleteClickAndPrimaryPrefixRemainsNative() {
         var router = InputRouter()
         let profile = MouseProfile(bindings: ["100": ActionBinding(action: .passthrough)], chords: [ChordBinding(buttons: [100,101], binding: ActionBinding(action: .copy)), ChordBinding(buttons: [0,3], binding: ActionBinding(action: .paste))])
         XCTAssertFalse(router.route(button: 0, phase: .down, profile: profile).suppress)

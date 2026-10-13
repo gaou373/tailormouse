@@ -10,6 +10,8 @@ final class InputIndicators: ObservableObject {
     @Published private(set) var observedOrdinaryButtons: Set<Int> = []
     @Published var detectionGeneration = 0
     @Published var inspectionMessage = "Hover here, then press a mouse button to identify it."
+    @Published private(set) var recording = false
+    @Published private(set) var recordingMessage = ""
     var devices: () -> [DetectedDevice] = { [] }
     var family: () -> String? = { "razer.naga.pro" }
     private var monitors: [Any] = []
@@ -18,6 +20,11 @@ final class InputIndicators: ObservableObject {
     private let bluetooth = BluetoothNagaInput()
     private var reports: [UInt64: NagaBluetoothReportDecoder] = [:]
     private var hovering = false
+    private var recorder = MouseButtonRecording()
+    private var recorded: ((Int) -> Void)?
+    private var recordingTimer: Timer?
+    private var escapeMonitor: Any?
+    private var recordingGeneration = 0
     var monitoringEnabled = true
     func beginModifiers() {
         guard monitoringEnabled else { return }
@@ -47,11 +54,51 @@ final class InputIndicators: ObservableObject {
         detectedButton = button; detectionGeneration += 1
     }
     func hover(_ entered: Bool) {
-        stopInspector(); hovering = entered
-        guard entered && monitoringEnabled else { return }
+        hovering = entered
+        if !recording { stopInspector(); if entered { startInspector() } }
+    }
+    func recordButton(completed: @escaping (Int) -> Void) {
+        cancelRecording()
+        guard monitoringEnabled else { return }
+        guard CGPreflightListenEventAccess() else { recordingMessage = "Enable Input Monitoring before recording a mouse button."; return }
+        recordingGeneration += 1; recorder.begin(); recorded = completed; recording = true
+        recordingMessage = "Press and release a button on your selected mouse. Escape cancels."
+        stopInspector(); startInspector()
+        guard tap != nil else { cancelRecording(); recordingMessage = "Mouse recording could not start. Check Input Monitoring and reopen the app."; return }
+        recordingTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: false) { [weak self] _ in
+            self?.cancelRecording(); self?.recordingMessage = "Recording timed out. Press Record to try again."
+        }
+        escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.keyCode == 53 else { return event }
+            self?.cancelRecording(); return nil
+        }
+    }
+    func cancelRecording() {
+        if recording { recordingMessage = "Recording cancelled." }
+        recordingGeneration += 1; recording = false; recorder.cancel(); recorded = nil
+        recordingTimer?.invalidate(); recordingTimer = nil
+        if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }; escapeMonitor = nil
+        stopInspector()
+        if hovering { startInspector() }
+    }
+    private func record(_ button: Int, phase: ButtonPhase, source: String) {
+        guard recording, let captured = recorder.route(button: button, phase: phase, source: source) else { return }
+        let generation = recordingGeneration
+        // Defer beyond the release so a click on Cancel can cancel instead of
+        // assigning itself to the chord or activating the next editor control.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            guard let self, self.recording, generation == self.recordingGeneration else { return }
+            let completed = self.recorded
+            self.cancelRecording()
+            self.recordingMessage = "Recorded \(ChordButtonChoices.title(captured))."
+            self.detected(captured); completed?(captured)
+        }
+    }
+    private func startInspector() {
+        guard monitoringEnabled else { return }
         guard CGPreflightListenEventAccess() else { inspectionMessage = "Input Monitoring approval is needed to identify buttons."; return }
         inspectionMessage = "Press a button on your mouse."
-        let types: [CGEventType] = [.leftMouseDown, .rightMouseDown, .otherMouseDown, .keyDown]
+        let types: [CGEventType] = [.leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp, .otherMouseDown, .otherMouseUp, .keyDown, .keyUp]
         let mask = types.reduce(CGEventMask(0)) { $0 | CGEventMask(1) << $1.rawValue }
         tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .listenOnly,
             eventsOfInterest: mask, callback: { _, type, event, context in
@@ -67,8 +114,11 @@ final class InputIndicators: ObservableObject {
         bluetooth.report = { [weak self] id, reportID, bytes in
             guard let self, self.family() == nil || self.family() == "razer.naga.pro" else { return }
             var decoder = self.reports[id] ?? NagaBluetoothReportDecoder()
-            for edge in decoder.route(reportID: reportID, bytes: bytes) where edge.phase == .down {
-                if let button = NagaKeyMap.button(for: edge.keyCode) { self.detected(button) }
+            for edge in decoder.route(reportID: reportID, bytes: bytes) {
+                if let button = NagaKeyMap.button(for: edge.keyCode) {
+                    if self.hovering && edge.phase == .down { self.detected(button) }
+                    self.record(button, phase: edge.phase, source: "hid:\(id)")
+                }
             }
             self.reports[id] = decoder
         }
@@ -76,16 +126,23 @@ final class InputIndicators: ObservableObject {
         if family() == nil || family() == "razer.naga.pro" { bluetooth.refresh() }
     }
     private func observe(_ type: CGEventType, _ event: CGEvent) {
+        guard [.leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp, .otherMouseDown, .otherMouseUp, .keyDown, .keyUp].contains(type) else { return }
         guard event.getIntegerValueField(.eventSourceUserData) != 0x5441494c4f52 else { return }
         let sender = UInt64(bitPattern: event.getIntegerValueField(CGEventField(rawValue: 87)!))
         guard let device = DeviceEndpoint.matching(senderID: sender, in: devices()),
               family() == nil || family() == device.identity.canonicalFamily else { return }
-        if type == .keyDown {
+        let phase: ButtonPhase = [.leftMouseUp, .rightMouseUp, .otherMouseUp, .keyUp].contains(type) ? .up : .down
+        let button: Int?
+        if type == .keyDown || type == .keyUp {
             guard device.identity.canonicalFamily == "razer.naga.pro" else { return }
-            if let button = NagaKeyMap.button(for: UInt16(clamping: event.getIntegerValueField(.keyboardEventKeycode))) { detected(button) }
-        } else if type == .leftMouseDown { detected(0) }
-        else if type == .rightMouseDown { detected(1) }
-        else if type == .otherMouseDown { detected(Int(event.getIntegerValueField(.mouseEventButtonNumber))) }
+            button = NagaKeyMap.button(for: UInt16(clamping: event.getIntegerValueField(.keyboardEventKeycode)))
+        } else if type == .leftMouseDown || type == .leftMouseUp { button = 0 }
+        else if type == .rightMouseDown || type == .rightMouseUp { button = 1 }
+        else { button = Int(event.getIntegerValueField(.mouseEventButtonNumber)) }
+        if let button {
+            if hovering && phase == .down { detected(button) }
+            record(button, phase: phase, source: "quartz:\(sender)")
+        }
     }
     private func stopInspector() {
         bluetooth.stop(); reports.removeAll()
@@ -93,5 +150,8 @@ final class InputIndicators: ObservableObject {
         if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
         tap = nil; source = nil
     }
-    deinit { stopInspector(); for monitor in monitors { NSEvent.removeMonitor(monitor) } }
+    deinit {
+        recordingTimer?.invalidate(); if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }
+        stopInspector(); for monitor in monitors { NSEvent.removeMonitor(monitor) }
+    }
 }

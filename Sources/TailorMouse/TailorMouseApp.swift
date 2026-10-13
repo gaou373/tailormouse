@@ -137,7 +137,7 @@ struct ContentView: View {
                                 Group {
                                     switch tab {
                                     case .wheel: WheelView(profile: profile, indicators: model.indicators)
-                                    case .chords: ChordsView(profile: profile)
+                                    case .chords: ChordsView(profile: profile, indicators: model.indicators, prepareRecording: { if model.isRunning { model.stop() }; catalog.refresh() })
                                     case .cursor: CursorView(profile: profile, pointer: model.pointer, sensitivity: model.sensitivity)
                                     case .device: DevicesView(model: model, catalog: catalog)
                                     case .support: SupportView(model: model)
@@ -670,53 +670,98 @@ private struct TrackingControl: View {
 
 private struct ChordsView: View {
     @Binding var profile: MouseProfile
-    private let allowed = Array(3..<32) + Array(100..<112)
+    @ObservedObject var indicators: InputIndicators
+    var prepareRecording: () -> Void = {}
+    @State private var recordingTitle = ""
+    private var extras: [Int] { ChordButtonChoices.extras(observed: indicators.observedOrdinaryButtons, saved: profile.chords.flatMap(\.buttons)) }
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 16) {
             HStack {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Two buttons, one action").font(.title2.weight(.semibold))
-                    Text("Hold one side button, then press another.").foregroundStyle(.secondary)
+                    Text("Hold the first button, then press the second.").foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button { profile.chords.append(ChordBinding(buttons: [100, 101], binding: ActionBinding(action: .copy))) } label: { Label("Add chord", systemImage: "plus") }
+            }.disabled(indicators.recording)
+            if indicators.recording || !indicators.recordingMessage.isEmpty {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        if indicators.recording { Text(recordingTitle).font(.headline) }
+                        Text(indicators.recordingMessage).font(.caption)
+                    }
+                    Spacer()
+                    if indicators.recording { Button("Cancel", action: indicators.cancelRecording) }
+                }.padding(10).background(CompactTheme.control.opacity(0.35), in: RoundedRectangle(cornerRadius: 6))
             }
             if profile.chords.isEmpty {
                 VStack(spacing: 12) {
                     Image(systemName: "square.stack.3d.up").font(.system(size: 35)).foregroundStyle(.secondary)
                     Text("No button chords yet").font(.headline)
-                    Text("Combine two side buttons to add another shortcut.").foregroundStyle(.secondary)
-                }.frame(maxWidth: .infinity).padding(.vertical, 60)
+                    Text("Add a chord, then choose or record its two mouse buttons.").foregroundStyle(.secondary)
+                }.frame(maxWidth: .infinity).padding(.vertical, 45)
             }
             ForEach($profile.chords) { $chord in
                 GroupBox {
-                    VStack(alignment: .leading, spacing: 16) {
-                        HStack {
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack(alignment: .bottom, spacing: 10) {
                             chordButton("First", chord: $chord, index: 0)
-                            Text("+").foregroundStyle(.secondary)
+                            Text("+").foregroundStyle(.secondary).padding(.bottom, 5)
                             chordButton("Second", chord: $chord, index: 1)
-                            Button(role: .destructive) { profile.chords.removeAll { $0.id == chord.id } } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                            Button(role: .destructive) { profile.chords.removeAll { $0.id == chord.id } } label: { Image(systemName: "trash") }.buttonStyle(.borderless).padding(.bottom, 5)
                         }
-                        if chord.buttons.count == 2 && chord.buttons[0] == chord.buttons[1] {
-                            Text("Choose two different buttons.").font(.caption).foregroundStyle(.orange)
-                        }
+                        if !chord.isValid { Text("Choose two different mouse buttons.").font(.caption).foregroundStyle(.orange) }
                         ModifierPicker(modifiers: $chord.modifiers)
                         ActionEditor(binding: $chord.binding)
-                    }.padding(12)
+                    }.padding(10).disabled(indicators.recording)
                 }
             }
-            Text("Left, right and middle clicks remain available for normal clicking while a chord is pending.").font(.caption).foregroundStyle(.secondary)
-        }
+            Text("Record stops handling and listens only to your selected mouse. Press Start to resume. A first Left, Right or Middle Click keeps its normal click and drag.")
+                .font(.caption).foregroundStyle(.secondary)
+        }.onDisappear { indicators.cancelRecording() }
     }
     private func chordButton(_ title: String, chord: Binding<ChordBinding>, index: Int) -> some View {
-        Picker(title, selection: Binding(get: { chord.wrappedValue.buttons.count > index ? chord.wrappedValue.buttons[index] : 100 + index }, set: { button in
-            var values = chord.wrappedValue.buttons
-            while values.count <= index { values.append(100 + values.count) }
-            values[index] = button
-            chord.wrappedValue.buttons = values
-        })) {
-            ForEach(allowed, id: \.self) { Text(buttonTitle($0)).tag($0) }
-        }
+        let selected = chord.wrappedValue.buttons.count > index ? chord.wrappedValue.buttons[index] : 100 + index
+        return VStack(alignment: .leading, spacing: 5) {
+            Text("\(title) button").font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                Menu {
+                    Section("Mouse clicks") {
+                        ForEach(ChordButtonChoices.clicks, id: \.self) { button in
+                            Button(ChordButtonChoices.title(button)) { setButton(button, chord: chord, index: index) }
+                        }
+                    }
+                    Menu("Side buttons") {
+                        ForEach(ChordButtonChoices.sideButtons, id: \.self) { button in
+                            Button(ChordButtonChoices.title(button)) { setButton(button, chord: chord, index: index) }
+                        }
+                    }
+                    if !extras.isEmpty {
+                        Menu("Other detected or saved buttons") {
+                            ForEach(extras, id: \.self) { button in
+                                Button(ChordButtonChoices.title(button)) { setButton(button, chord: chord, index: index) }
+                            }
+                        }
+                    }
+                } label: { Text(ChordButtonChoices.title(selected)).frame(maxWidth: .infinity) }
+                    .menuStyle(.button).accessibilityLabel("\(title) mouse button")
+                Button("Record") {
+                    prepareRecording(); recordingTitle = "Recording \(title.lowercased()) button"
+                    let id = chord.wrappedValue.id
+                    indicators.recordButton { button in
+                        guard let position = profile.chords.firstIndex(where: { $0.id == id }) else { return }
+                        var values = profile.chords[position].buttons
+                        while values.count <= index { values.append(100 + values.count) }
+                        values[index] = button; profile.chords[position].buttons = values
+                    }
+                }.controlSize(.small).accessibilityLabel("Record \(title.lowercased()) mouse button")
+            }
+        }.frame(maxWidth: .infinity)
+    }
+    private func setButton(_ button: Int, chord: Binding<ChordBinding>, index: Int) {
+        var values = chord.wrappedValue.buttons
+        while values.count <= index { values.append(100 + values.count) }
+        values[index] = button; chord.wrappedValue.buttons = values
     }
 }
 
