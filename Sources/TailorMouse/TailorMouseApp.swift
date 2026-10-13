@@ -178,8 +178,9 @@ private struct ButtonsView: View {
         _profile = profile; self.indicators = indicators; _page = State(initialValue: initialPage)
     }
     private var effectiveModifiers: ModifierMask { modifiers.union(indicators.modifiers) }
+    private var ordinaryButtons: [Int] { VisibleMouseButtons.ordinary(observed: indicators.observedOrdinaryButtons) }
     private var rows: [Int] {
-        page == 0 ? Array(0..<8) : page == 1 ? Array(100..<106) : Array(106..<112)
+        page == 0 ? Array(ordinaryButtons.prefix(8)) : page == 1 ? Array(100..<106) : Array(106..<112)
     }
     var body: some View {
         HStack(alignment: .top, spacing: 18) {
@@ -212,15 +213,15 @@ private struct ButtonsView: View {
                             .accessibilityLabel(index == 0 ? "Mouse buttons" : index == 1 ? "Side buttons 1 through 6" : "Side buttons 7 through 12")
                             .help(index == 0 ? "Mouse buttons" : index == 1 ? "Side buttons 1–6" : "Side buttons 7–12")
                     }
-                    Menu {
-                        ForEach(8..<32, id: \.self) { button in
+                    if ordinaryButtons.count > 8 { Menu {
+                        ForEach(Array(ordinaryButtons.dropFirst(8)), id: \.self) { button in
                             Button(compactButtonTitle(button)) {
                                 selection = ButtonSelection(button: button, modifiers: effectiveModifiers,
                                     binding: profile.actionBinding(for: button, modifiers: effectiveModifiers))
                             }
                         }
                     } label: { Image(systemName: "ellipsis") }
-                        .menuStyle(.button).buttonStyle(.plain).help("More mouse buttons")
+                        .menuStyle(.button).buttonStyle(.plain).help("Other detected mouse buttons") }
                 }.padding(.bottom, 3)
             }.frame(maxWidth: .infinity)
             VStack(spacing: 12) {
@@ -417,6 +418,9 @@ private struct ActionDetails: View {
                     var shortcut = binding.shortcut ?? Shortcut(keyCode: 0); shortcut.modifiers = flags; binding.shortcut = shortcut
                 }))
                 Text("Shortcuts run once per button press.").font(.caption).foregroundStyle(.secondary)
+                if binding.shortcut?.functionKey != nil {
+                    Text("F21–F24 use macOS function characters; the receiving app must support them.").font(.caption).foregroundStyle(.secondary)
+                }
             } else if category == .click {
                 Picker("Behavior", selection: $binding.action) {
                     Text("Click").tag(ButtonAction.mouseClick)
@@ -474,6 +478,20 @@ private struct ShortcutRecorder: View {
             Button(recording ? "Press a shortcut…" : shortcut.map(shortcutTitle) ?? "Record shortcut…") {
                 if recording { stopRecording() } else { startRecording() }
             }.frame(minWidth: 160).help("Records a key combination only while this app is focused. Press Escape to cancel.")
+            Menu {
+                ForEach(ShortcutKeyGroup.allCases, id: \.self) { group in
+                    Menu(group.rawValue) {
+                        ForEach(ShortcutKeyChoice.choices(in: group)) { key in
+                            Button(key.title) {
+                                stopRecording()
+                                shortcut = key.shortcut(modifiers: shortcut?.modifiers ?? [])
+                            }
+                        }
+                    }
+                }
+            } label: { Image(systemName: "chevron.down") }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).frame(width: 24).disabled(recording)
+                .accessibilityLabel("Choose hotkey").help("Choose a key without pressing it, including F1–F24.")
             if shortcut != nil { Button("Clear") { stopRecording(); shortcut = nil }.controlSize(.small) }
             if recording { Text("Escape cancels").font(.caption).foregroundStyle(.secondary) }
         }.onDisappear { stopRecording() }
@@ -491,7 +509,9 @@ private struct ShortcutRecorder: View {
             if flags.contains(.shift) { mask.insert(.shift) }
             if flags.contains(.option) { mask.insert(.option) }
             if flags.contains(.control) { mask.insert(.control) }
-            shortcut = Shortcut(keyCode: event.keyCode, modifiers: mask)
+            let scalar = event.charactersIgnoringModifiers?.unicodeScalars.first?.value
+            let functionKey = scalar.flatMap { (0xF718...0xF71B).contains($0) ? Int($0 - 0xF703) : nil }
+            shortcut = Shortcut(keyCode: functionKey == nil ? event.keyCode : 127, modifiers: mask, functionKey: functionKey)
             stopRecording()
             return nil
         }
@@ -769,14 +789,13 @@ private struct DevicesView: View {
 }
 
 private func shortcutTitle(_ shortcut: Shortcut) -> String {
-    let keys: [UInt16: String] = [0: "A", 1: "S", 2: "D", 3: "F", 4: "H", 5: "G", 6: "Z", 7: "X", 8: "C", 9: "V", 11: "B", 12: "Q", 13: "W", 14: "E", 15: "R", 16: "Y", 17: "T", 18: "1", 19: "2", 20: "3", 21: "4", 22: "6", 23: "5", 24: "=", 25: "9", 26: "7", 27: "−", 28: "8", 29: "0", 30: "]", 31: "O", 32: "U", 33: "[", 34: "I", 35: "P", 36: "Return", 37: "L", 38: "J", 39: "'", 40: "K", 41: ";", 42: "\\", 43: ",", 44: "/", 45: "N", 46: "M", 47: ".", 48: "Tab", 49: "Space", 50: "`", 51: "Delete", 53: "Escape", 96: "F5", 97: "F6", 98: "F7", 99: "F3", 100: "F8", 101: "F9", 103: "F11", 109: "F10", 111: "F12", 118: "F4", 120: "F2", 122: "F1", 123: "←", 124: "→", 125: "↓", 126: "↑"]
-    return shortcut.modifiers.title + (keys[shortcut.keyCode] ?? "Key \(shortcut.keyCode)")
+    shortcut.modifiers.title + shortcut.keyTitle
 }
 
 #if TAILORMOUSE_UI_PREVIEW
-func buttonEditorPreview() -> some View {
+func buttonEditorPreview(functionKey: Int? = nil) -> some View {
     ButtonActionSheet(title: "Button 7",
-        initial: ActionBinding(action: .shortcut, shortcut: Shortcut(keyCode: 123, modifiers: .option)),
+        initial: ActionBinding(action: .shortcut, shortcut: functionKey.map { Shortcut(keyCode: 127, modifiers: .option, functionKey: $0) } ?? Shortcut(keyCode: 123, modifiers: .option)),
         inherited: ActionBinding(), isModifier: false, save: { _, _ in })
 }
 func sideButtonsPreview() -> some View {

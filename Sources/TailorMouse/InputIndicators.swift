@@ -7,6 +7,7 @@ import TailorMouseCore
 final class InputIndicators: ObservableObject {
     @Published var modifiers = ModifierMask()
     @Published var detectedButton: Int?
+    @Published private(set) var observedOrdinaryButtons: Set<Int> = []
     @Published var detectionGeneration = 0
     @Published var inspectionMessage = "Hover here, then press a mouse button to identify it."
     var devices: () -> [DetectedDevice] = { [] }
@@ -37,9 +38,14 @@ final class InputIndicators: ObservableObject {
         }) { monitors.append(global) }
     }
     func observed(button: Int, phase: ButtonPhase) {
+        if phase == .down, (0...31).contains(button) { observedOrdinaryButtons.insert(button) }
         if hovering && phase == .down { detected(button) }
     }
-    private func detected(_ button: Int) { detectedButton = button; detectionGeneration += 1 }
+    func resetDetectedButtons() { observedOrdinaryButtons.removeAll(); detectedButton = nil }
+    private func detected(_ button: Int) {
+        if (0...31).contains(button) { observedOrdinaryButtons.insert(button) }
+        detectedButton = button; detectionGeneration += 1
+    }
     func hover(_ entered: Bool) {
         stopInspector(); hovering = entered
         guard entered && monitoringEnabled else { return }

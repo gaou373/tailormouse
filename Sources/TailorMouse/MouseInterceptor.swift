@@ -457,7 +457,7 @@ final class MouseInterceptor {
             // An explicit one-shot mapped action; never used for sensitivity.
             let point = snapPoint(destination: binding.snapDestination, cursor: origin.location)
             _ = CGWarpMouseCursorPosition(point)
-        case .shortcut: if let key = binding.shortcut { shortcut(key.keyCode, key.modifiers) }
+        case .shortcut: if let key = binding.shortcut { shortcut(key) }
         case .mouseClick: click(button: binding.mouseButton, location: origin.location, flags: origin.flags)
         case .scroll:
             guard let event = CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 2,
@@ -498,10 +498,19 @@ final class MouseInterceptor {
     }
 
     private func shortcut(_ code: UInt16, _ modifiers: ModifierMask) {
-        guard let down = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: true),
-              let up = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: false) else { return }
-        down.flags = eventFlags(modifiers); up.flags = eventFlags(modifiers)
-        post(down); post(up)
+        shortcut(Shortcut(keyCode: code, modifiers: modifiers))
+    }
+    private func shortcut(_ shortcut: Shortcut) {
+        let edges = shortcut.edges
+        let events = edges.compactMap { edge -> CGEvent? in
+            guard let event = CGEvent(keyboardEventSource: nil, virtualKey: edge.keyCode, keyDown: edge.phase == .down) else { return nil }
+            event.flags = eventFlags(edge.modifiers)
+            if shortcut.functionNumber != nil { event.flags.insert(.maskSecondaryFn) }
+            if var character = edge.unicode { event.keyboardSetUnicodeString(stringLength: 1, unicodeString: &character) }
+            return event
+        }
+        guard events.count == 2 else { return }
+        for event in events { post(event) }
     }
 
     private func click(button: Int, location: CGPoint, flags: CGEventFlags) {

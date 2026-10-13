@@ -25,6 +25,7 @@ struct TailorMouseUIRender {
         ]
         try render(ContentView(model: model), size: NSSize(width: 680, height: 510), to: output.appendingPathComponent("buttons.png"))
         try render(buttonEditorPreview(), size: NSSize(width: 520, height: 400), to: output.appendingPathComponent("button-editor.png"))
+        try render(buttonEditorPreview(functionKey: 24), size: NSSize(width: 520, height: 400), to: output.appendingPathComponent("button-editor-f24.png"))
         try render(sideButtonsPreview(), size: NSSize(width: 640, height: 370), to: output.appendingPathComponent("side-buttons.png"))
         model.indicators.modifiers = [.command, .option]
         try render(ContentView(model: model), size: NSSize(width: 680, height: 510), to: output.appendingPathComponent("buttons-modifiers.png"))

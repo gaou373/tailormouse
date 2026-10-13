@@ -43,7 +43,11 @@ public struct ModifierMask: OptionSet, Codable, Equatable, Hashable {
 public struct Shortcut: Codable, Equatable {
     public var keyCode: UInt16
     public var modifiers: ModifierMask
-    public init(keyCode: UInt16, modifiers: ModifierMask = []) { self.keyCode = keyCode; self.modifiers = modifiers }
+    /// F21–F24 have AppKit function characters but no native ADB key code.
+    public var functionKey: Int?
+    public init(keyCode: UInt16, modifiers: ModifierMask = [], functionKey: Int? = nil) {
+        self.keyCode = keyCode; self.modifiers = modifiers; self.functionKey = functionKey
+    }
 }
 
 public struct ActionBinding: Codable, Equatable {
