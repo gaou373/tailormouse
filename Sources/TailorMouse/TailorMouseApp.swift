@@ -68,7 +68,10 @@ struct ContentView: View {
     @ObservedObject var model: AppModel
     @ObservedObject private var catalog: DeviceCatalog
     @State private var tab = EditorTab.buttons
-    init(model: AppModel) { self.model = model; self.catalog = model.devices }
+    init(model: AppModel, tabName: String = "Buttons") {
+        self.model = model; self.catalog = model.devices
+        _tab = State(initialValue: EditorTab(rawValue: tabName) ?? .buttons)
+    }
     private var profile: Binding<MouseProfile> {
         Binding(get: { model.selectedProfile }, set: { model.updateProfile($0) })
     }
@@ -128,14 +131,14 @@ struct ContentView: View {
                     }.pickerStyle(.segmented).labelsHidden().frame(width: 460).accessibilityLabel("Settings tabs")
                     Group {
                         if tab == .buttons {
-                            ButtonsView(profile: profile)
+                            ButtonsView(profile: profile, indicators: model.indicators)
                         } else {
                             ScrollView {
                                 Group {
                                     switch tab {
-                                    case .wheel: WheelView(profile: profile)
+                                    case .wheel: WheelView(profile: profile, indicators: model.indicators)
                                     case .chords: ChordsView(profile: profile)
-                                    case .cursor: CursorView(sensitivity: model.sensitivity)
+                                    case .cursor: CursorView(profile: profile, pointer: model.pointer)
                                     case .device: DevicesView(model: model, catalog: catalog)
                                     case .support: SupportView(model: model)
                                     case .buttons: EmptyView()
@@ -167,12 +170,14 @@ private struct ButtonSelection: Identifiable {
 
 private struct ButtonsView: View {
     @Binding var profile: MouseProfile
+    @ObservedObject var indicators: InputIndicators
     @State private var page = 0
     @State private var modifiers = ModifierMask()
     @State private var selection: ButtonSelection?
-    init(profile: Binding<MouseProfile>, initialPage: Int = 0) {
-        _profile = profile; _page = State(initialValue: initialPage)
+    init(profile: Binding<MouseProfile>, indicators: InputIndicators = InputIndicators(), initialPage: Int = 0) {
+        _profile = profile; self.indicators = indicators; _page = State(initialValue: initialPage)
     }
+    private var effectiveModifiers: ModifierMask { modifiers.union(indicators.modifiers) }
     private var rows: [Int] {
         page == 0 ? Array(0..<8) : page == 1 ? Array(100..<106) : Array(106..<112)
     }
@@ -183,9 +188,9 @@ private struct ButtonsView: View {
                     ForEach(rows, id: \.self) { button in
                         HStack(spacing: 8) {
                             Text(compactButtonTitle(button)).frame(width: 104, alignment: .trailing)
-                            let binding = profile.actionBinding(for: button, modifiers: modifiers)
+                            let binding = profile.actionBinding(for: button, modifiers: effectiveModifiers)
                             Button {
-                                selection = ButtonSelection(button: button, modifiers: modifiers, binding: binding)
+                                selection = ButtonSelection(button: button, modifiers: effectiveModifiers, binding: binding)
                             } label: {
                                 HStack(spacing: 7) {
                                     Image(systemName: actionSymbol(binding.action)).font(.system(size: 12))
@@ -193,6 +198,7 @@ private struct ButtonsView: View {
                                     Spacer(minLength: 0)
                                 }.padding(.horizontal, 8).frame(height: 23)
                                     .frame(maxWidth: .infinity).background(CompactTheme.control, in: RoundedRectangle(cornerRadius: 5))
+                                    .overlay(RoundedRectangle(cornerRadius: 5).stroke(indicators.detectedButton == button ? CompactTheme.accent : .clear, lineWidth: 2))
                             }.buttonStyle(.plain).help("Edit \(compactButtonTitle(button))")
                         }
                     }
@@ -209,8 +215,8 @@ private struct ButtonsView: View {
                     Menu {
                         ForEach(8..<32, id: \.self) { button in
                             Button(compactButtonTitle(button)) {
-                                selection = ButtonSelection(button: button, modifiers: modifiers,
-                                    binding: profile.actionBinding(for: button, modifiers: modifiers))
+                                selection = ButtonSelection(button: button, modifiers: effectiveModifiers,
+                                    binding: profile.actionBinding(for: button, modifiers: effectiveModifiers))
                             }
                         }
                     } label: { Image(systemName: "ellipsis") }
@@ -219,16 +225,23 @@ private struct ButtonsView: View {
             }.frame(maxWidth: .infinity)
             VStack(spacing: 12) {
                 Spacer(minLength: 25)
-                MouseIllustration(sidePanel: page > 0).frame(width: 188, height: 220)
+                MouseIllustration(sidePanel: page > 0, selectedButton: indicators.detectedButton).frame(width: 188, height: 190)
+                    .onHover { indicators.hover($0) }
+                Text(indicators.detectedButton.map(compactButtonTitle) ?? indicators.inspectionMessage)
+                    .font(.system(size: 10)).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true).foregroundStyle(.secondary)
                 Spacer(minLength: 16)
-                Text(modifiers.isEmpty ? "Default mapping" : "\(modifiers.title) mapping")
+                Text(effectiveModifiers.isEmpty ? "Default mapping" : "\(effectiveModifiers.title) mapping")
                     .font(.system(size: 10)).foregroundStyle(.secondary)
-                CompactModifierPicker(modifiers: $modifiers)
+                CompactModifierPicker(modifiers: $modifiers, pressed: indicators.modifiers)
             }.frame(width: 180).padding(.bottom, 4)
         }.padding(.horizontal, 24).padding(.top, 2)
+            .onDisappear { indicators.hover(false) }
+            .onReceive(indicators.$detectionGeneration) { _ in
+                if let button = indicators.detectedButton { page = button >= 106 ? 2 : button >= 100 ? 1 : 0 }
+            }
             .sheet(item: $selection) { selected in
                 ButtonActionSheet(title: compactButtonTitle(selected.button), initial: selected.binding,
-                    inherited: modifiers.isEmpty ? MouseProfile().actionBinding(for: selected.button) : profile.actionBinding(for: selected.button),
+                    inherited: selected.modifiers.isEmpty ? MouseProfile().actionBinding(for: selected.button) : profile.actionBinding(for: selected.button),
                     isModifier: !selected.modifiers.isEmpty) { binding, useInherited in
                     if selected.modifiers.isEmpty {
                         profile.bindings[String(selected.button)] = binding
@@ -277,12 +290,13 @@ private struct ButtonActionSheet: View {
     let title: String
     let inherited: ActionBinding
     let isModifier: Bool
+    let wheel: Bool
     let save: (ActionBinding, Bool) -> Void
     @State private var draft: ActionBinding
     @Environment(\.dismiss) private var dismiss
-    init(title: String, initial: ActionBinding, inherited: ActionBinding, isModifier: Bool,
+    init(title: String, initial: ActionBinding, inherited: ActionBinding, isModifier: Bool, wheel: Bool = false,
          save: @escaping (ActionBinding, Bool) -> Void) {
-        self.title = title; self.inherited = inherited; self.isModifier = isModifier; self.save = save
+        self.title = title; self.inherited = inherited; self.isModifier = isModifier; self.wheel = wheel; self.save = save
         _draft = State(initialValue: initial)
     }
     private var shortcutModifiers: Binding<ModifierMask> {
@@ -296,55 +310,26 @@ private struct ButtonActionSheet: View {
             Text(title).font(.system(size: 16, weight: .semibold)).frame(maxWidth: .infinity)
                 .padding(.vertical, 10).background(CompactTheme.panel, in: RoundedRectangle(cornerRadius: 5))
                 .overlay(RoundedRectangle(cornerRadius: 5).stroke(CompactTheme.border))
-            HStack(spacing: 9) {
-                Image(systemName: actionSymbol(draft.action))
-                Picker("Action", selection: $draft.action) {
-                    ForEach(ButtonAction.allCases) { Text($0 == .shortcut ? "Keyboard Shortcut" : $0.title).tag($0) }
-                }.labelsHidden().frame(width: 225)
-            }
+            CategoryPicker(binding: $draft, wheel: wheel)
             VStack(spacing: 0) {
                 ForEach(0..<4) { index in
                     HStack {
-                        Text(index == 0 ? bindingTitle(draft, button: 100) : " ").lineLimit(1)
+                        Text(index == 0 ? (wheel && draft.action == .passthrough ? "Native scrolling" : bindingTitle(draft, button: 100)) : " ").lineLimit(1)
                         Spacer()
                     }.padding(.horizontal, 8).frame(height: 24)
                         .background(index == 0 ? Color.white.opacity(0.16) : index % 2 == 0 ? Color.white.opacity(0.025) : Color.clear)
                 }
             }.overlay(Rectangle().stroke(CompactTheme.border, lineWidth: 1))
-            if draft.action == .shortcut {
-                ShortcutRecorder(shortcut: $draft.shortcut)
-                HStack(spacing: 12) {
-                    ForEach([(0, "cmd", ModifierMask.command), (1, "shift", .shift), (2, "option", .option), (3, "control", .control)], id: \.0) { item in
-                        Toggle(item.1, isOn: Binding(get: { shortcutModifiers.wrappedValue.contains(item.2) }, set: { enabled in
-                            var mask = shortcutModifiers.wrappedValue
-                            if enabled { mask.insert(item.2) } else { mask.remove(item.2) }
-                            shortcutModifiers.wrappedValue = mask
-                        })).toggleStyle(.checkbox)
-                    }
-                }
-                Text("Shortcuts run once per button press.").font(.system(size: 11)).foregroundStyle(.secondary)
-            } else if draft.action == .mouseClick {
-                Picker("Click", selection: $draft.mouseButton) {
-                    ForEach(0..<5, id: \.self) { Text(buttonTitle($0)).tag($0) }
-                }
-            } else if draft.action == .scroll {
-                HStack {
-                    Stepper("Vertical: \(draft.scrollY)", value: $draft.scrollY, in: -50...50)
-                    Stepper("Horizontal: \(draft.scrollX)", value: $draft.scrollX, in: -50...50)
-                }
-            } else {
-                Text(draft.action == .passthrough ? "Sends the button's original input to the active application." : draft.action == .disabled ? "No action while TailorMouse is running." : "Runs the selected action when you press the button.")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-            }
+            ActionDetails(binding: $draft, wheel: wheel)
             Spacer(minLength: 6)
             HStack {
                 Button(isModifier ? "Use Default Mapping" : "Restore Defaults") { draft = inherited }
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("OK") { save(draft, isModifier && draft == inherited); dismiss() }.buttonStyle(CompactConfirmationStyle())
-                    .keyboardShortcut(.defaultAction).disabled(draft.action == .shortcut && draft.shortcut == nil)
+                    .keyboardShortcut(.defaultAction).disabled((draft.action == .shortcut && draft.shortcut == nil) || (draft.action == .open && (draft.openTarget?.isEmpty ?? true)))
             }
-        }.padding(20).frame(width: 520, height: 360).font(.system(size: 13))
+        }.padding(20).frame(width: 520, height: 400).font(.system(size: 13))
             .background(CompactTheme.background).tint(CompactTheme.accent).preferredColorScheme(.dark)
     }
 }
@@ -360,7 +345,7 @@ private struct SupportView: View {
             Divider()
             Button("Accessibility & Input Monitoring…", action: model.openPermissions)
             Link("Project on GitHub", destination: URL(string: "https://github.com/gaou373/tailormouse")!)
-            Text("Mouse handling starts only when you press Start. USB hardware DPI changes are applied separately in Cursor.")
+            Text("Mouse handling starts only when you press Start. Cursor tracking changes apply while Running and restore when you press Stop.")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
@@ -396,27 +381,85 @@ private struct ModifierPicker: View {
 private struct ActionEditor: View {
     @Binding var binding: ActionBinding
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Picker("Action", selection: $binding.action) {
-                ForEach(ButtonAction.allCases) { Text($0.title).tag($0) }
-            }.frame(maxWidth: 410)
-            switch binding.action {
-            case .passthrough:
-                Text("Sends the original input to the focused app. Naga side buttons can type keys or play an alert when the app cannot use them.").font(.caption).foregroundStyle(.secondary)
-            case .disabled:
-                Text("Consumes the button without sending an action while TailorMouse is running.").font(.caption).foregroundStyle(.secondary)
-            case .shortcut: ShortcutRecorder(shortcut: $binding.shortcut)
-            case .mouseClick:
-                Picker("Click", selection: $binding.mouseButton) {
-                    ForEach(0..<5, id: \.self) { Text(buttonTitle($0)).tag($0) }
-                }.frame(maxWidth: 410)
-            case .scroll:
-                HStack {
-                    Stepper("Vertical: \(binding.scrollY)", value: $binding.scrollY, in: -50...50)
-                    Stepper("Horizontal: \(binding.scrollX)", value: $binding.scrollX, in: -50...50)
+        VStack(alignment: .leading, spacing: 12) {
+            CategoryPicker(binding: $binding)
+            ActionDetails(binding: $binding)
+        }
+    }
+}
+
+private struct CategoryPicker: View {
+    @Binding var binding: ActionBinding
+    var wheel = false
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: actionSymbol(binding.action))
+            Picker("Action", selection: Binding(get: { ActionCategory.category(for: binding.action, wheel: wheel) }, set: { category in
+                binding.action = category.actions[0]
+            })) {
+                ForEach(ActionCategory.allCases.dropLast()) { Text($0.rawValue).tag($0) }
+                Divider()
+                Text(ActionCategory.none.rawValue).tag(ActionCategory.none)
+            }.labelsHidden().frame(width: 230)
+        }
+    }
+}
+
+private struct ActionDetails: View {
+    @Binding var binding: ActionBinding
+    var wheel = false
+    private var category: ActionCategory { .category(for: binding.action, wheel: wheel) }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if category == .shortcut {
+                ShortcutRecorder(shortcut: $binding.shortcut)
+                ModifierPicker(modifiers: Binding(get: { binding.shortcut?.modifiers ?? [] }, set: { flags in
+                    var shortcut = binding.shortcut ?? Shortcut(keyCode: 0); shortcut.modifiers = flags; binding.shortcut = shortcut
+                }))
+                Text("Shortcuts run once per button press.").font(.caption).foregroundStyle(.secondary)
+            } else if category == .click {
+                Picker("Behavior", selection: $binding.action) {
+                    Text("Click").tag(ButtonAction.mouseClick)
+                    Text("Original input (Passthrough)").tag(ButtonAction.passthrough)
                 }
-                Text("Positive values scroll up or left; negative values scroll down or right.").font(.caption).foregroundStyle(.secondary)
-            default: EmptyView()
+                if binding.action == .mouseClick {
+                    Picker("Click", selection: $binding.mouseButton) {
+                        ForEach(0..<5, id: \.self) { Text(buttonTitle($0)).tag($0) }
+                    }
+                }
+            } else if category == .scroll {
+                if wheel {
+                    Picker("Behavior", selection: $binding.action) {
+                        Text("Native scrolling").tag(ButtonAction.passthrough)
+                        Text("Custom scrolling").tag(ButtonAction.scroll)
+                    }
+                }
+                if binding.action == .scroll {
+                    HStack {
+                        Stepper("Vertical: \(binding.scrollY)", value: $binding.scrollY, in: -50...50)
+                        Stepper("Horizontal: \(binding.scrollX)", value: $binding.scrollX, in: -50...50)
+                    }
+                    Text("Positive scrolls up / left; negative scrolls down / right.").font(.caption).foregroundStyle(.secondary)
+                }
+            } else if [.system, .zoom, .music].contains(category) {
+                Picker("Command", selection: $binding.action) { ForEach(category.actions) { Text($0.title).tag($0) } }
+            } else if category == .open {
+                HStack {
+                    TextField("File, application or web address", text: Binding(get: { binding.openTarget ?? "" }, set: { binding.openTarget = $0 }))
+                        .textFieldStyle(.roundedBorder)
+                    Button("Choose…") {
+                        let panel = NSOpenPanel(); panel.canChooseDirectories = true
+                        if panel.runModal() == .OK { binding.openTarget = panel.url?.path }
+                    }
+                }
+            } else if category == .snapping {
+                Picker("Destination", selection: Binding(get: { binding.snapDestination ?? "screen" }, set: { binding.snapDestination = $0 })) {
+                    Text("Current display center").tag("screen")
+                    Text("Front window center").tag("window")
+                }
+            } else {
+                Text(category == .none ? "No action while TailorMouse is running." : category == .mission ? "Show Mission Control." : "Switch to the next application.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
     }
@@ -461,24 +504,69 @@ private struct ShortcutRecorder: View {
 
 }
 
+private struct WheelEditSelection: Identifiable {
+    let direction: WheelDirection
+    let modifiers: ModifierMask
+    let binding: ActionBinding
+    var id: String { direction.rawValue }
+}
 private struct WheelView: View {
     @Binding var profile: MouseProfile
+    @ObservedObject var indicators: InputIndicators
+    @State private var horizontal = false
+    @State private var modifiers = ModifierMask()
+    @State private var selected: WheelEditSelection?
+    private var effective: ModifierMask { modifiers.union(indicators.modifiers) }
     var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            Text("Scrolling that feels right").font(.title2.weight(.semibold))
-            GroupBox("Vertical wheel") {
-                VStack(alignment: .leading, spacing: 16) {
-                    Toggle("Reverse direction", isOn: $profile.invertWheel)
-                    SpeedSlider(title: "Speed", value: $profile.wheelSpeed, range: 0.25...4)
-                }.padding(14)
+        VStack(spacing: 12) {
+            VStack(spacing: 9) {
+                SpeedSlider(title: "Vertical", value: $profile.wheelSpeed, range: 0.25...4)
+                SpeedSlider(title: "Horizontal", value: $profile.horizontalWheelSpeed, range: 0.25...4)
+                HStack {
+                    Toggle("Reverse vertical", isOn: $profile.invertWheel)
+                    Toggle("Reverse horizontal", isOn: $profile.invertHorizontalWheel)
+                    Spacer()
+                }.controlSize(.small)
             }
-            GroupBox("Horizontal wheel") {
-                VStack(alignment: .leading, spacing: 16) {
-                    Toggle("Reverse direction", isOn: $profile.invertHorizontalWheel)
-                    SpeedSlider(title: "Speed", value: $profile.horizontalWheelSpeed, range: 0.25...4)
-                }.padding(14)
+            Divider()
+            HStack(alignment: .top, spacing: 20) {
+                VStack(spacing: 24) {
+                    Picker("Wheel", selection: $horizontal) {
+                        Text("Vertical").tag(false); Text("Horizontal").tag(true)
+                    }.pickerStyle(.segmented).labelsHidden().frame(width: 200)
+                    ForEach(horizontal ? [WheelDirection.left, .right] : [.up, .down]) { direction in
+                        HStack {
+                            Text(direction.title).frame(width: 76, alignment: .trailing)
+                            let binding = profile.wheelBinding(direction: direction, modifiers: effective)
+                            Button { selected = WheelEditSelection(direction: direction, modifiers: effective, binding: binding) } label: {
+                                HStack {
+                                    Image(systemName: binding.action == .passthrough ? "arrow.up.arrow.down" : actionSymbol(binding.action))
+                                    Text(binding.action == .passthrough ? "Scroll \(direction.rawValue.capitalized)" : bindingTitle(binding, button: 100)).lineLimit(1)
+                                    Spacer()
+                                }.padding(.horizontal, 8).frame(height: 24)
+                                    .background(CompactTheme.control, in: RoundedRectangle(cornerRadius: 4))
+                            }.buttonStyle(.plain)
+                        }
+                    }
+                }.frame(maxWidth: .infinity)
+                VStack {
+                    MouseIllustration().frame(width: 135, height: 120).scaleEffect(0.7)
+                        .overlay(Image(systemName: horizontal ? "arrow.left.arrow.right" : "arrow.up.arrow.down")
+                            .font(.system(size: 27, weight: .bold)).foregroundStyle(.red).rotationEffect(.degrees(25)))
+                    CompactModifierPicker(modifiers: $modifiers, pressed: indicators.modifiers)
+                }.frame(width: 155)
             }
-            Text("Wheel speed applies to discrete wheel ticks. Smooth scrolling retains its original behavior.").font(.callout).foregroundStyle(.secondary)
+            Text("Choose an action for each roll direction. Speed and reverse settings apply to scrolling; held modifiers select their own mappings.")
+                .font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+        }.sheet(item: $selected) { selection in
+            let flags = selection.modifiers
+            let direction = selection.direction
+            ButtonActionSheet(title: direction.title, initial: selection.binding,
+                inherited: flags.isEmpty ? MouseProfile().wheelBinding(direction: direction) : profile.wheelBinding(direction: direction),
+                isModifier: !flags.isEmpty, wheel: true) { binding, inherit in
+                let key = flags.isEmpty ? direction.rawValue : "\(direction.rawValue):\(flags.rawValue)"
+                if inherit { profile.wheelBindings.removeValue(forKey: key) } else { profile.wheelBindings[key] = binding }
+            }
         }
     }
 }
@@ -489,47 +577,37 @@ private struct SpeedSlider: View {
     let range: ClosedRange<Double>
     var body: some View {
         HStack(spacing: 16) {
-            Text(title).frame(width: 52, alignment: .leading)
-            Slider(value: $value, in: range, step: 0.05)
+            Text(title).frame(width: 65, alignment: .leading)
+            Slider(value: Binding(get: { value }, set: { value = ($0 * 20).rounded() / 20 }), in: range)
             Text(String(format: "%.2f×", value)).monospacedDigit().frame(width: 56)
         }
     }
 }
 
 private struct CursorView: View {
-    @ObservedObject var sensitivity: NagaSensitivity
+    @Binding var profile: MouseProfile
+    @ObservedObject var pointer: NativePointer
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            Text("Find your pace").font(.title2.weight(.semibold))
-            GroupBox("Wired Naga Pro sensitivity") {
-                VStack(alignment: .leading, spacing: 18) {
-                    Text("Lower DPI moves the pointer less. Higher DPI moves it farther.").font(.callout)
-                    Slider(value: $sensitivity.requestedDPI, in: 100...20000, step: 100)
-                        .accessibilityLabel("Mouse sensitivity in DPI")
-                    HStack {
-                        Text("DPI")
-                        TextField("DPI", value: $sensitivity.requestedDPI, format: .number.precision(.fractionLength(0)))
-                            .textFieldStyle(.roundedBorder).frame(width: 100)
-                        ForEach([800, 1600, 3200], id: \.self) { dpi in
-                            Button("\(dpi)") { sensitivity.requestedDPI = Double(dpi) }
-                        }
-                        Spacer()
-                    }
-                    HStack {
-                        Button("Read from mouse", action: sensitivity.refresh)
-                        Button("Apply to mouse", action: sensitivity.apply).buttonStyle(.borderedProminent)
-                            .disabled(sensitivity.current == nil)
-                        Button("Restore previous DPI", action: sensitivity.restore)
-                            .disabled(!sensitivity.canRestore)
-                    }
-                    Text(sensitivity.message).font(.callout).foregroundStyle(.secondary)
-                }.padding(14)
-                    .disabled(sensitivity.busy)
-            }
-            Text("Apply changes the connected USB mouse for all applications, even while button handling is stopped. This live setting may reset when you reconnect or change the mouse's onboard profile. Bluetooth and receiver sensitivity control is not available yet.")
-                .font(.callout).foregroundStyle(.secondary)
-        }
-        .onAppear { sensitivity.refresh() }
+        VStack(alignment: .leading, spacing: 24) {
+            Text("Speed").font(.headline)
+            VStack(spacing: 22) {
+                HStack(spacing: 12) {
+                    Text("Acceleration").frame(width: 90, alignment: .trailing)
+                    Text(String(format: "%.2f", profile.pointerAcceleration ?? pointer.systemAcceleration)).monospacedDigit().frame(width: 48)
+                    Slider(value: Binding(get: { profile.pointerAcceleration ?? min(5, pointer.systemAcceleration) }, set: { profile.pointerAcceleration = ($0 * 100).rounded() / 100 }), in: 0...5)
+                }
+                HStack(spacing: 12) {
+                    Text("Sensitivity").frame(width: 90, alignment: .trailing)
+                    Text(String(format: "%.2f×", profile.pointerSensitivity ?? 1)).monospacedDigit().frame(width: 48)
+                    Slider(value: Binding(get: { profile.pointerSensitivity ?? 1 }, set: { profile.pointerSensitivity = ($0 * 100).rounded() / 100 }), in: 0.25...4)
+                }
+            }.disabled(!pointer.supported)
+            Button("Restore System Tracking") { profile.pointerAcceleration = nil; profile.pointerSensitivity = nil }
+            Text(pointer.message).font(.callout).foregroundStyle(.secondary)
+            Divider()
+            Text("Changes are live while Running and follow your application profile. Sensitivity scales your current tracking speed. Stop restores the tracking captured when you started.")
+                .font(.caption).foregroundStyle(.secondary)
+        }.onAppear { pointer.inspect() }
     }
 }
 
@@ -665,7 +743,10 @@ func buttonEditorPreview() -> some View {
         inherited: ActionBinding(), isModifier: false, save: { _, _ in })
 }
 func sideButtonsPreview() -> some View {
-    ButtonsView(profile: .constant(MouseProfile()), initialPage: 2)
+    let indicators = InputIndicators()
+    indicators.monitoringEnabled = false
+    indicators.detectedButton = 109
+    return ButtonsView(profile: .constant(MouseProfile()), indicators: indicators, initialPage: 2)
         .padding(.vertical, 18).frame(width: 640, height: 370)
         .background(CompactTheme.panel).preferredColorScheme(.dark)
 }

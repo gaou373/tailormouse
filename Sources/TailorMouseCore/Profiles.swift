@@ -3,6 +3,7 @@ import Foundation
 public enum ButtonAction: String, Codable, CaseIterable, Identifiable {
     case passthrough, disabled, back, forward, copy, paste, cut, undo, redo, selectAll
     case escape, enter, space, appSwitcher, missionControl, shortcut, mouseClick, scroll
+    case zoomIn, zoomOut, playPause, nextTrack, previousTrack, volumeUp, volumeDown, mute, cursorSnap, open
     public var id: String { rawValue }
     public var title: String {
         switch self {
@@ -11,6 +12,14 @@ public enum ButtonAction: String, Codable, CaseIterable, Identifiable {
         case .missionControl: return "Mission Control"
         case .mouseClick: return "Mouse Click"
         case .disabled: return "No action"
+        case .zoomIn: return "Zoom In"
+        case .zoomOut: return "Zoom Out"
+        case .playPause: return "Play / Pause"
+        case .nextTrack: return "Next Track"
+        case .previousTrack: return "Previous Track"
+        case .volumeUp: return "Volume Up"
+        case .volumeDown: return "Volume Down"
+        case .cursorSnap: return "Cursor Snapping"
         default: return rawValue.capitalized
         }
     }
@@ -43,8 +52,11 @@ public struct ActionBinding: Codable, Equatable {
     public var mouseButton: Int
     public var scrollX: Int
     public var scrollY: Int
-    public init(action: ButtonAction = .passthrough, shortcut: Shortcut? = nil, mouseButton: Int = 0, scrollX: Int = 0, scrollY: Int = 3) {
+    public var openTarget: String?
+    public var snapDestination: String?
+    public init(action: ButtonAction = .passthrough, shortcut: Shortcut? = nil, mouseButton: Int = 0, scrollX: Int = 0, scrollY: Int = 3, openTarget: String? = nil, snapDestination: String? = nil) {
         self.action = action; self.shortcut = shortcut; self.mouseButton = mouseButton; self.scrollX = scrollX; self.scrollY = scrollY
+        self.openTarget = openTarget; self.snapDestination = snapDestination
     }
 }
 
@@ -72,6 +84,9 @@ public struct MouseProfile: Codable, Equatable, Identifiable {
     public var horizontalWheelSpeed: Double
     public var invertHorizontalWheel: Bool
     public var pointerSpeed: Double
+    public var pointerAcceleration: Double?
+    public var pointerSensitivity: Double?
+    public var wheelBindings: [String: ActionBinding]
     public var bindings: [String: ActionBinding]
     public var modifierBindings: [String: ActionBinding]
     public var chords: [ChordBinding]
@@ -80,17 +95,20 @@ public struct MouseProfile: Codable, Equatable, Identifiable {
                 invertWheel: Bool = false, wheelSpeed: Double = 1,
                 button3: ButtonAction = .passthrough, button4: ButtonAction = .passthrough,
                 horizontalWheelSpeed: Double = 1, invertHorizontalWheel: Bool = false,
-                pointerSpeed: Double = 1, bindings: [String: ActionBinding] = [:],
+                pointerSpeed: Double = 1, pointerAcceleration: Double? = nil, pointerSensitivity: Double? = nil,
+                wheelBindings: [String: ActionBinding] = [:], bindings: [String: ActionBinding] = [:],
                 modifierBindings: [String: ActionBinding] = [:], chords: [ChordBinding] = []) {
         self.id = id; self.name = name; self.bundleIdentifier = bundleIdentifier
         self.invertWheel = invertWheel; self.wheelSpeed = wheelSpeed
         self.button3 = button3; self.button4 = button4
         self.horizontalWheelSpeed = horizontalWheelSpeed; self.invertHorizontalWheel = invertHorizontalWheel
         self.pointerSpeed = pointerSpeed; self.bindings = bindings; self.modifierBindings = modifierBindings; self.chords = chords
+        self.pointerAcceleration = pointerAcceleration; self.pointerSensitivity = pointerSensitivity; self.wheelBindings = wheelBindings
     }
     private enum CodingKeys: String, CodingKey {
         case id, name, bundleIdentifier, invertWheel, wheelSpeed, button3, button4
         case horizontalWheelSpeed, invertHorizontalWheel, pointerSpeed, bindings, modifierBindings, chords
+        case pointerAcceleration, pointerSensitivity, wheelBindings
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -104,6 +122,9 @@ public struct MouseProfile: Codable, Equatable, Identifiable {
                   horizontalWheelSpeed: try c.decodeIfPresent(Double.self, forKey: .horizontalWheelSpeed) ?? c.decodeIfPresent(Double.self, forKey: .wheelSpeed) ?? 1,
                   invertHorizontalWheel: try c.decodeIfPresent(Bool.self, forKey: .invertHorizontalWheel) ?? c.decodeIfPresent(Bool.self, forKey: .invertWheel) ?? false,
                   pointerSpeed: try c.decodeIfPresent(Double.self, forKey: .pointerSpeed) ?? 1,
+                  pointerAcceleration: try c.decodeIfPresent(Double.self, forKey: .pointerAcceleration),
+                  pointerSensitivity: try c.decodeIfPresent(Double.self, forKey: .pointerSensitivity),
+                  wheelBindings: try c.decodeIfPresent([String: ActionBinding].self, forKey: .wheelBindings) ?? [:],
                   bindings: try c.decodeIfPresent([String: ActionBinding].self, forKey: .bindings) ?? [:],
                   modifierBindings: try c.decodeIfPresent([String: ActionBinding].self, forKey: .modifierBindings) ?? [:],
                   chords: try c.decodeIfPresent([ChordBinding].self, forKey: .chords) ?? [])
@@ -122,6 +143,11 @@ public struct MouseProfile: Codable, Equatable, Identifiable {
         return ActionBinding(action: button == 3 ? button3 : button == 4 ? button4 : .passthrough)
     }
     public func action(for button: Int) -> ButtonAction { actionBinding(for: button).action }
+    public func wheelBinding(direction: WheelDirection, modifiers: ModifierMask = []) -> ActionBinding {
+        wheelBindings["\(direction.rawValue):\(modifiers.rawValue)"] ?? wheelBindings[direction.rawValue]
+            ?? ActionBinding(action: .passthrough, scrollX: direction.axis == 1 ? direction.sign * 3 : 0,
+                             scrollY: direction.axis == 0 ? direction.sign * 3 : 0)
+    }
     public func inheritedProfile(name: String, bundleIdentifier: String) -> MouseProfile {
         var profile = self; profile.id = UUID(); profile.name = name; profile.bundleIdentifier = bundleIdentifier; return profile
     }

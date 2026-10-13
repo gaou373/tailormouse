@@ -8,7 +8,7 @@ fi
 BUILD="$ROOT/.local/build"
 xcrun swift build -c release --scratch-path "$BUILD/swift"
 BIN_DIR="$(xcrun swift build -c release --scratch-path "$BUILD/swift" --show-bin-path)"
-xcrun swiftc -parse-as-library -D TAILORMOUSE_UI_PREVIEW -I "$BIN_DIR/Modules" \
-    Sources/TailorMouse/*.swift "$BIN_DIR/TailorMouseCore.build/"*.swift.o \
+xcrun swiftc -parse-as-library -D TAILORMOUSE_UI_PREVIEW -I "$BIN_DIR/Modules" -I "$BIN_DIR/NativeHIDBridge.build" \
+    Sources/TailorMouse/*.swift "$BIN_DIR/TailorMouseCore.build/"*.swift.o "$BIN_DIR/NativeHIDBridge.build/"*.o \
     -o "$BUILD/TailorMouseUIRender"
 "$BUILD/TailorMouseUIRender" "$ROOT/.local/ui"

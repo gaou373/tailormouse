@@ -32,6 +32,7 @@ final class MouseInterceptor {
     private final class InputState {
         var router = InputRouter()
         var wheel = WheelTransformer()
+        var mappedWheel = WheelTransformer()
         var origins: [Int: CGEvent] = [:]
         var keyboard = NagaKeyboardDecoder()
         var bluetoothReports = NagaBluetoothReportDecoder()
@@ -210,6 +211,27 @@ final class MouseInterceptor {
                 layout: layout, prelude: prelude)
         }
         if type == .scrollWheel {
+            var wheelMapped = false
+            if event.getIntegerValueField(.scrollWheelEventIsContinuous) == 0 {
+                let mapped = WheelActionRouter.route(deltas: [event.getIntegerValueField(.scrollWheelEventDeltaAxis1), event.getIntegerValueField(.scrollWheelEventDeltaAxis2)],
+                    continuous: false, profile: profile, modifiers: modifierMask(event.flags))
+                for action in mapped {
+                    let axis = action.axis
+                    var binding = action.binding
+                    wheelMapped = true
+                    if binding.action == .scroll {
+                        let values = state.mappedWheel.transform([Int64(binding.scrollY), Int64(binding.scrollX), 0], continuous: false, profile: profile)
+                        binding.scrollY = Int(clamping: values[0]); binding.scrollX = Int(clamping: values[1])
+                    }
+                    execute(binding, origin: event)
+                    let fields: [CGEventField] = axis == 0 ? [.scrollWheelEventDeltaAxis1, .scrollWheelEventFixedPtDeltaAxis1, .scrollWheelEventPointDeltaAxis1] : [.scrollWheelEventDeltaAxis2, .scrollWheelEventFixedPtDeltaAxis2, .scrollWheelEventPointDeltaAxis2]
+                    for field in fields { event.setIntegerValueField(field, value: 0) }
+                }
+                let scrollFields: [CGEventField] = [.scrollWheelEventDeltaAxis1, .scrollWheelEventDeltaAxis2, .scrollWheelEventDeltaAxis3,
+                    .scrollWheelEventFixedPtDeltaAxis1, .scrollWheelEventFixedPtDeltaAxis2, .scrollWheelEventFixedPtDeltaAxis3,
+                    .scrollWheelEventPointDeltaAxis1, .scrollWheelEventPointDeltaAxis2, .scrollWheelEventPointDeltaAxis3]
+                if wheelMapped && scrollFields.allSatisfy({ event.getDoubleValueField($0) == 0 }) { return nil }
+            }
             transformWheel(event, state: state, profile: profile)
             return Unmanaged.passUnretained(event)
         }
@@ -416,6 +438,25 @@ final class MouseInterceptor {
         case .space: shortcut(49, [])
         case .appSwitcher: shortcut(48, .command)
         case .missionControl: shortcut(126, .control)
+        case .zoomIn: shortcut(24, .command)
+        case .zoomOut: shortcut(27, .command)
+        case .playPause: mediaKey(16)
+        case .nextTrack: mediaKey(17)
+        case .previousTrack: mediaKey(18)
+        case .volumeUp: mediaKey(0)
+        case .volumeDown: mediaKey(1)
+        case .mute: mediaKey(7)
+        case .open:
+            if let target = binding.openTarget {
+                DispatchQueue.main.async {
+                    let url = target.hasPrefix("/") ? URL(fileURLWithPath: target) : URL(string: target)
+                    if let url, url.isFileURL || ["https", "http"].contains(url.scheme ?? "") { NSWorkspace.shared.open(url) }
+                }
+            }
+        case .cursorSnap:
+            // An explicit one-shot mapped action; never used for sensitivity.
+            let point = snapPoint(destination: binding.snapDestination, cursor: origin.location)
+            _ = CGWarpMouseCursorPosition(point)
         case .shortcut: if let key = binding.shortcut { shortcut(key.keyCode, key.modifiers) }
         case .mouseClick: click(button: binding.mouseButton, location: origin.location, flags: origin.flags)
         case .scroll:
@@ -423,6 +464,29 @@ final class MouseInterceptor {
                 wheel1: Int32(clamping: binding.scrollY), wheel2: Int32(clamping: binding.scrollX), wheel3: 0) else { return }
             post(event)
         }
+    }
+
+    private func mediaKey(_ code: Int) {
+        for state in [0xA, 0xB] {
+            if let event = NSEvent.otherEvent(with: .systemDefined, location: .zero, modifierFlags: [], timestamp: 0,
+                windowNumber: 0, context: nil, subtype: 8, data1: (code << 16) | (state << 8), data2: -1)?.cgEvent { post(event) }
+        }
+    }
+    private func snapPoint(destination: String?, cursor: CGPoint) -> CGPoint {
+        if destination == "window", let app = NSWorkspace.shared.frontmostApplication,
+           let windows = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]] {
+            for window in windows where (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == app.processIdentifier &&
+                (window[kCGWindowLayer as String] as? NSNumber)?.intValue == 0 {
+                if let bounds = window[kCGWindowBounds as String] as? [String: Any],
+                   let frame = CGRect(dictionaryRepresentation: bounds as CFDictionary) { return CGPoint(x: frame.midX, y: frame.midY) }
+            }
+        }
+        let frames = NSScreen.screens.map { screen in
+            CGRect(x: screen.frame.minX, y: (NSScreen.screens.first?.frame.height ?? 0) - screen.frame.maxY,
+                   width: screen.frame.width, height: screen.frame.height)
+        }
+        let frame = frames.first { $0.contains(cursor) } ?? frames.first ?? CGRect(origin: cursor, size: .zero)
+        return CGPoint(x: frame.midX, y: frame.midY)
     }
 
     private func replay(_ origin: CGEvent) {

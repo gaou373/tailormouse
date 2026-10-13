@@ -30,6 +30,7 @@ struct CompactConfirmationStyle: ButtonStyle {
 
 struct CompactModifierPicker: View {
     @Binding var modifiers: ModifierMask
+    var pressed = ModifierMask()
     private let items: [(String, ModifierMask, String)] = [
         ("⌘", .command, "Command"), ("⇧", .shift, "Shift"),
         ("⌥", .option, "Option"), ("⌃", .control, "Control")
@@ -43,10 +44,10 @@ struct CompactModifierPicker: View {
                     else { modifiers.insert(item.1) }
                 } label: {
                     Text(item.0).font(.system(size: 14, weight: .semibold)).frame(width: 35, height: 22)
-                        .background(modifiers.contains(item.1) ? CompactTheme.accent : CompactTheme.control.opacity(0.65))
+                            .background(modifiers.union(pressed).contains(item.1) ? CompactTheme.accent : CompactTheme.control.opacity(0.65))
                 }.buttonStyle(.plain).help("Mappings with \(item.2) held")
                     .accessibilityLabel("\(item.2) modifier")
-                    .accessibilityValue(modifiers.contains(item.1) ? "Selected" : "Not selected")
+                    .accessibilityValue(modifiers.union(pressed).contains(item.1) ? "Selected" : "Not selected")
             }
         }.overlay(Rectangle().stroke(CompactTheme.border))
     }
@@ -55,6 +56,7 @@ struct CompactModifierPicker: View {
 /// Original vector illustration; no target artwork or extracted assets.
 struct MouseIllustration: View {
     var sidePanel = false
+    var selectedButton: Int?
     private var bodyPath: Path {
         Path { p in
             p.move(to: CGPoint(x: 30, y: 153))
@@ -77,13 +79,16 @@ struct MouseIllustration: View {
             bodyPath.stroke(Color(red: 0.08, green: 0.67, blue: 0.95), lineWidth: 2).offset(y: 5)
             bodyPath.fill(LinearGradient(colors: [.white, Color(red: 0.94, green: 0.95, blue: 0.98)], startPoint: .top, endPoint: .bottomTrailing))
             bodyPath.stroke(Color.gray.opacity(0.35), lineWidth: 1)
+            if selectedButton == 0 || selectedButton == 1 {
+                bodyPath.stroke(CompactTheme.accent, lineWidth: 2)
+            }
             Path { p in
                 p.move(to: CGPoint(x: 58, y: 79))
                 p.addCurve(to: CGPoint(x: 162, y: 89), control1: CGPoint(x: 92, y: 65), control2: CGPoint(x: 139, y: 68))
                 p.move(to: CGPoint(x: 111, y: 76))
                 p.addCurve(to: CGPoint(x: 71, y: 171), control1: CGPoint(x: 98, y: 104), control2: CGPoint(x: 75, y: 143))
             }.stroke(Color(red: 0.65, green: 0.69, blue: 0.77), lineWidth: 1)
-            Capsule().fill(Color(red: 0.30, green: 0.34, blue: 0.40)).frame(width: 9, height: 25)
+            Capsule().fill(selectedButton == 2 ? CompactTheme.accent : Color(red: 0.30, green: 0.34, blue: 0.40)).frame(width: 9, height: 25)
                 .rotationEffect(.degrees(25)).position(x: 116, y: 58)
             if sidePanel {
                 VStack(spacing: 3) {
@@ -92,7 +97,7 @@ struct MouseIllustration: View {
                             ForEach(0..<3) { col in
                                 Text("\(row * 3 + col + 1)").font(.system(size: 7, weight: .bold))
                                     .foregroundStyle(.white).frame(width: 12, height: 12)
-                                    .background(Color(red: 0.36, green: 0.40, blue: 0.47), in: RoundedRectangle(cornerRadius: 2))
+                                    .background(selectedButton == 100 + row * 3 + col ? CompactTheme.accent : Color(red: 0.36, green: 0.40, blue: 0.47), in: RoundedRectangle(cornerRadius: 2))
                             }
                         }
                     }

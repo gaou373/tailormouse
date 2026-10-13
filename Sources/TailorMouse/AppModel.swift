@@ -13,6 +13,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var lastSideButtonRelease = "None yet"
     let devices = DeviceCatalog()
     let sensitivity = NagaSensitivity()
+    let pointer = NativePointer()
+    let indicators = InputIndicators()
     private let interceptor = MouseInterceptor()
     private let settingsURL: URL
     private var saveSubscription: AnyCancellable?
@@ -31,7 +33,13 @@ final class AppModel: ObservableObject {
         selectedID = configuration.defaultProfile.id
         // UI rendering uses an isolated in-memory model. It never loads/saves
         // user settings, writes runtime status or starts input interception.
-        if preview { return }
+        if preview { indicators.monitoringEnabled = false; return }
+        indicators.devices = { [weak self] in self?.devices.devices ?? [] }
+        indicators.family = { [weak self] in self?.configuration.selectedDeviceFamily }
+        indicators.beginModifiers()
+        pointer.configuration = { [weak self] in self?.configuration ?? ProfileConfiguration() }
+        pointer.profile = { [weak self] in self?.configuration.profile(for: NSWorkspace.shared.frontmostApplication?.bundleIdentifier) ?? MouseProfile() }
+        pointer.failed = { [weak self] message in self?.stop(); self?.status = message; self?.writeRuntimeStatus() }
         if FileManager.default.fileExists(atPath: settingsURL.path) {
             do {
                 let data = try Data(contentsOf: settingsURL)
@@ -50,6 +58,7 @@ final class AppModel: ObservableObject {
         interceptor.observed = { [weak self] value in self?.lastInput = value; self?.writeRuntimeStatus() }
         interceptor.observedButton = { [weak self] button, phase in
             guard let self else { return }
+            self.indicators.observed(button: button, phase: phase)
             if (100...111).contains(button) {
                 let label = String(button - 99)
                 if phase == .down {
@@ -66,7 +75,7 @@ final class AppModel: ObservableObject {
                 if phase == .up { self.mouseButtonUpEvents[label, default: 0] += 1 }
             }
         }
-        interceptor.stopped = { [weak self] message in self?.isRunning = false; self?.status = message; self?.writeRuntimeStatus() }
+        interceptor.stopped = { [weak self] message in self?.pointer.stop(); self?.isRunning = false; self?.status = message; self?.writeRuntimeStatus() }
         saveSubscription = $configuration.dropFirst().debounce(for: .milliseconds(300), scheduler: RunLoop.main).sink { [weak self] value in
             guard self?.hasEdits == true else { return }
             self?.save(value)
@@ -74,6 +83,7 @@ final class AppModel: ObservableObject {
         terminationObserver = NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
             guard let self else { return }
             self.interceptor.stop()
+            self.pointer.stop()
             self.isRunning = false
             self.status = "TailorMouse is closed."
             self.writeRuntimeStatus()
@@ -93,6 +103,7 @@ final class AppModel: ObservableObject {
         hasEdits = true
         if value.id == configuration.defaultProfile.id { configuration.defaultProfile = value }
         else if let index = configuration.appProfiles.firstIndex(where: { $0.id == value.id }) { configuration.appProfiles[index] = value }
+        pointer.edited()
     }
 
     func setDeviceFamily(_ family: String?) {
@@ -142,6 +153,8 @@ final class AppModel: ObservableObject {
         devices.refresh()
         if let error = interceptor.start() { status = error; writeRuntimeStatus(); return }
         isRunning = true
+        pointer.start()
+        guard isRunning else { return }
         sideButtonDownEvents.removeAll(); sideButtonUpEvents.removeAll()
         mouseButtonDownEvents.removeAll(); mouseButtonUpEvents.removeAll()
         lastSideButtonPress = "None yet"; lastSideButtonRelease = "None yet"
@@ -151,6 +164,7 @@ final class AppModel: ObservableObject {
     }
     func stop() {
         interceptor.stop()
+        pointer.stop()
         isRunning = false
         status = "Stopped. Your mouse works normally."
         writeRuntimeStatus()
@@ -236,10 +250,19 @@ final class AppModel: ObservableObject {
         func validButton(_ button: Int) -> Bool { (0...31).contains(button) || (100...111).contains(button) }
         func validBinding(_ binding: ActionBinding) -> Bool {
             (0...31).contains(binding.mouseButton) && (-50...50).contains(binding.scrollX) && (-50...50).contains(binding.scrollY) &&
-            (binding.shortcut.map { $0.keyCode <= 127 && $0.modifiers.rawValue <= 15 } ?? true)
+            (binding.shortcut.map { $0.keyCode <= 127 && $0.modifiers.rawValue <= 15 } ?? true) &&
+            (binding.snapDestination.map { ["screen", "window"].contains($0) } ?? true) &&
+            (binding.openTarget.map { $0.count <= 4096 && ($0.hasPrefix("/") || ["http", "https"].contains(URL(string: $0)?.scheme ?? "")) } ?? true)
         }
         guard !profile.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               [profile.wheelSpeed, profile.horizontalWheelSpeed, profile.pointerSpeed].allSatisfy({ $0.isFinite && (0.25...4).contains($0) }),
+              profile.pointerAcceleration.map({ $0.isFinite && (0...5).contains($0) }) ?? true,
+              profile.pointerSensitivity.map({ $0.isFinite && (0.25...4).contains($0) }) ?? true,
+              profile.wheelBindings.allSatisfy({ key, value in
+                  let parts = key.split(separator: ":")
+                  return (1...2).contains(parts.count) && WheelDirection(rawValue: String(parts[0])) != nil &&
+                      (parts.count == 1 || UInt(parts[1]).map { $0 <= 15 } == true) && validBinding(value)
+              }),
               profile.bindings.allSatisfy({ key, value in Int(key).map(validButton) == true && validBinding(value) }),
               profile.modifierBindings.allSatisfy({ key, value in
                   let parts = key.split(separator: ":")
