@@ -132,12 +132,15 @@ struct ContentView: View {
                     Group {
                         if tab == .buttons {
                             ButtonsView(profile: profile, indicators: model.indicators)
+                        } else if tab == .chords {
+                            ChordsView(profile: profile, indicators: model.indicators, prepareRecording: { if model.isRunning { model.stop() }; catalog.refresh() })
+                                .padding(.horizontal, 12).padding(.bottom, 4)
                         } else {
                             ScrollView {
                                 Group {
                                     switch tab {
                                     case .wheel: WheelView(profile: profile, indicators: model.indicators)
-                                    case .chords: ChordsView(profile: profile, indicators: model.indicators, prepareRecording: { if model.isRunning { model.stop() }; catalog.refresh() })
+                                    case .chords: EmptyView()
                                     case .cursor: CursorView(profile: profile, pointer: model.pointer, sensitivity: model.sensitivity)
                                     case .device: DevicesView(model: model, catalog: catalog)
                                     case .support: SupportView(model: model)
@@ -668,100 +671,210 @@ private struct TrackingControl: View {
     }
 }
 
+private struct ChordEditorSelection: Identifiable {
+    let chord: ChordBinding
+    let isNew: Bool
+    var id: UUID { chord.id }
+}
+
+private func chordTitle(_ chord: ChordBinding) -> String {
+    chord.modifiers.title + chord.buttons.map(ChordButtonChoices.title).joined(separator: " + ")
+}
+
 private struct ChordsView: View {
     @Binding var profile: MouseProfile
     @ObservedObject var indicators: InputIndicators
     var prepareRecording: () -> Void = {}
-    @State private var recordingTitle = ""
-    private var extras: [Int] { ChordButtonChoices.extras(observed: indicators.observedOrdinaryButtons, saved: profile.chords.flatMap(\.buttons)) }
+    @State private var selectedID: UUID?
+    @State private var editor: ChordEditorSelection?
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Two buttons, one action").font(.title2.weight(.semibold))
-                    Text("Hold the first button, then press the second.").foregroundStyle(.secondary)
-                }
+        VStack(spacing: 8) {
+            VStack(spacing: 0) {
+                HStack(spacing: 0) {
+                    Text("Chord").frame(width: 196, alignment: .leading).padding(.leading, 8)
+                    Divider()
+                    Text("Function").frame(maxWidth: .infinity, alignment: .leading).padding(.leading, 7)
+                    Divider()
+                    Text("Note").frame(width: 62, alignment: .leading).padding(.leading, 6)
+                }.font(.system(size: 11, weight: .medium)).frame(height: 27)
+                    .background(Color.black.opacity(0.25))
+                Divider()
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(Array(profile.chords.enumerated()), id: \.element.id) { index, chord in
+                            chordRow(chord, index: index)
+                        }
+                        if profile.chords.isEmpty {
+                            Text("No chords yet. Click + to add one.").font(.system(size: 12)).foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity).padding(.vertical, 70)
+                        }
+                    }
+                }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            }.background(Color.black.opacity(0.08)).overlay(Rectangle().stroke(CompactTheme.border))
+            HStack(spacing: 6) {
+                HStack(spacing: 1) {
+                    Button { editor = ChordEditorSelection(chord: ChordBinding(buttons: [100,101], binding: ActionBinding(action: .disabled)), isNew: true) } label: { Image(systemName: "plus").frame(width: 22, height: 20) }
+                        .accessibilityLabel("Add chord").help("Add chord")
+                    Button {
+                        profile.chords.removeAll { $0.id == selectedID }; selectedID = nil
+                    } label: { Image(systemName: "minus").frame(width: 22, height: 20) }
+                        .disabled(selectedID == nil).accessibilityLabel("Remove selected chord").help("Remove selected chord")
+                }.buttonStyle(.bordered).controlSize(.small)
+                Button("Edit…") { if let chord = profile.chords.first(where: { $0.id == selectedID }) { open(chord) } }
+                    .controlSize(.small).disabled(selectedID == nil)
                 Spacer()
-                Button { profile.chords.append(ChordBinding(buttons: [100, 101], binding: ActionBinding(action: .copy))) } label: { Label("Add chord", systemImage: "plus") }
-            }.disabled(indicators.recording)
+                Text("Click a function to edit its chord.").font(.system(size: 10)).foregroundStyle(.secondary)
+            }
+        }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            .sheet(item: $editor) { selection in
+                ChordActionSheet(initial: selection.chord, isNew: selection.isNew, indicators: indicators, prepareRecording: prepareRecording) { updated in
+                    if let index = profile.chords.firstIndex(where: { $0.id == updated.id }) { profile.chords[index] = updated }
+                    else { profile.chords.append(updated) }
+                    selectedID = updated.id
+                }
+            }
+            .onDisappear { indicators.cancelRecording() }
+    }
+    private func chordRow(_ chord: ChordBinding, index: Int) -> some View {
+                            HStack(spacing: 0) {
+                                Text(chordTitle(chord)).lineLimit(1).truncationMode(.middle)
+                                    .frame(width: 196, alignment: .leading).padding(.leading, 8)
+                                    .help(chordTitle(chord))
+                                Divider()
+                                Button { open(chord) } label: {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: actionSymbol(chord.binding.action)).font(.system(size: 12))
+                                        Text(bindingTitle(chord.binding, button: 100)).lineLimit(1)
+                                        Spacer(minLength: 0)
+                                    }.padding(.horizontal, 7).frame(height: 22)
+                                        .background(CompactTheme.control.opacity(0.8), in: RoundedRectangle(cornerRadius: 5))
+                                }.buttonStyle(.plain).padding(.horizontal, 6)
+                                    .accessibilityLabel("Edit function for \(chordTitle(chord))")
+                                Divider()
+                                Text(chord.note ?? "").font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                                    .frame(width: 62, alignment: .leading).padding(.leading, 6).help(chord.note ?? "")
+                            }.frame(height: 39).font(.system(size: 12))
+                                .background(selectedID == chord.id ? Color.white.opacity(0.16) : index.isMultiple(of: 2) ? Color.black.opacity(0.19) : Color.white.opacity(0.025))
+                                .contentShape(Rectangle())
+                                .onTapGesture(count: 2) { open(chord) }
+                                .onTapGesture { selectedID = chord.id }
+    }
+    private func open(_ chord: ChordBinding) { selectedID = chord.id; editor = ChordEditorSelection(chord: chord, isNew: false) }
+}
+
+private struct ChordActionSheet: View {
+    @ObservedObject var indicators: InputIndicators
+    let prepareRecording: () -> Void
+    let save: (ChordBinding) -> Void
+    @State private var draft: ChordBinding
+    @State private var buttonsExpanded: Bool
+    @Environment(\.dismiss) private var dismiss
+    init(initial: ChordBinding, isNew: Bool, indicators: InputIndicators, prepareRecording: @escaping () -> Void, save: @escaping (ChordBinding) -> Void) {
+        self.indicators = indicators; self.prepareRecording = prepareRecording; self.save = save
+        _draft = State(initialValue: initial); _buttonsExpanded = State(initialValue: isNew)
+    }
+    private var canSave: Bool {
+        draft.isValid && (draft.binding.action != .shortcut || draft.binding.shortcut != nil) &&
+            (draft.binding.action != .open || !(draft.binding.openTarget?.isEmpty ?? true))
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(chordTitle(draft)).font(.system(size: 16, weight: .semibold)).lineLimit(1)
+                .frame(maxWidth: .infinity).padding(.vertical, 10)
+                .background(CompactTheme.panel, in: RoundedRectangle(cornerRadius: 5))
+                .overlay(RoundedRectangle(cornerRadius: 5).stroke(CompactTheme.border))
+            HStack {
+                CategoryPicker(binding: $draft.binding).disabled(indicators.recording)
+                Spacer()
+                if draft.buttons.first.map({ $0 < 3 }) == true {
+                    Label("Caution", systemImage: "exclamationmark.triangle.fill").font(.system(size: 11))
+                        .padding(.horizontal, 8).padding(.vertical, 3).background(CompactTheme.control.opacity(0.7), in: RoundedRectangle(cornerRadius: 4))
+                        .help("When a primary click is pressed first, its normal click and drag still occur.")
+                }
+            }
+            VStack(spacing: 0) {
+                ForEach(0..<4) { index in
+                    HStack {
+                        Text(index == 0 ? bindingTitle(draft.binding, button: 100) : " ").lineLimit(1)
+                        Spacer()
+                    }.padding(.horizontal, 8).frame(height: 24)
+                        .background(index == 0 ? Color.white.opacity(0.16) : index.isMultiple(of: 2) ? Color.white.opacity(0.025) : Color.clear)
+                }
+            }.overlay(Rectangle().stroke(CompactTheme.border))
+            ActionDetails(binding: $draft.binding).disabled(indicators.recording)
+            DisclosureGroup("Chord buttons & note", isExpanded: $buttonsExpanded) {
+                ScrollView {
+                    ChordTriggerControls(chord: $draft, indicators: indicators, prepareRecording: prepareRecording)
+                        .padding(.top, 8)
+                }.frame(height: 164)
+            }
+            Spacer(minLength: 4)
+            HStack {
+                Button("Restore Defaults") { draft.binding = ActionBinding(action: .disabled) }.disabled(indicators.recording)
+                Spacer()
+                Button("Cancel") { indicators.cancelRecording(); dismiss() }.keyboardShortcut(.cancelAction)
+                Button("OK") { indicators.cancelRecording(); save(draft); dismiss() }
+                    .buttonStyle(CompactConfirmationStyle()).keyboardShortcut(.defaultAction).disabled(!canSave || indicators.recording)
+            }
+        }.padding(20).frame(width: 540, height: buttonsExpanded ? 598 : 420).font(.system(size: 13))
+            .background(CompactTheme.background).tint(CompactTheme.accent).preferredColorScheme(.dark)
+            .onDisappear { indicators.cancelRecording() }
+    }
+}
+
+private struct ChordTriggerControls: View {
+    @Binding var chord: ChordBinding
+    @ObservedObject var indicators: InputIndicators
+    var prepareRecording: () -> Void = {}
+    @State private var recordingTitle = ""
+    private var extras: [Int] { ChordButtonChoices.extras(observed: indicators.observedOrdinaryButtons, saved: chord.buttons) }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
             if indicators.recording || !indicators.recordingMessage.isEmpty {
                 HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        if indicators.recording { Text(recordingTitle).font(.headline) }
-                        Text(indicators.recordingMessage).font(.caption)
-                    }
+                    Text(indicators.recording ? "\(recordingTitle): \(indicators.recordingMessage)" : indicators.recordingMessage).font(.caption)
                     Spacer()
-                    if indicators.recording { Button("Cancel", action: indicators.cancelRecording) }
-                }.padding(10).background(CompactTheme.control.opacity(0.35), in: RoundedRectangle(cornerRadius: 6))
-            }
-            if profile.chords.isEmpty {
-                VStack(spacing: 12) {
-                    Image(systemName: "square.stack.3d.up").font(.system(size: 35)).foregroundStyle(.secondary)
-                    Text("No button chords yet").font(.headline)
-                    Text("Add a chord, then choose or record its two mouse buttons.").foregroundStyle(.secondary)
-                }.frame(maxWidth: .infinity).padding(.vertical, 45)
-            }
-            ForEach($profile.chords) { $chord in
-                GroupBox {
-                    VStack(alignment: .leading, spacing: 14) {
-                        HStack(alignment: .bottom, spacing: 10) {
-                            chordButton("First", chord: $chord, index: 0)
-                            Text("+").foregroundStyle(.secondary).padding(.bottom, 5)
-                            chordButton("Second", chord: $chord, index: 1)
-                            Button(role: .destructive) { profile.chords.removeAll { $0.id == chord.id } } label: { Image(systemName: "trash") }.buttonStyle(.borderless).padding(.bottom, 5)
-                        }
-                        if !chord.isValid { Text("Choose two different mouse buttons.").font(.caption).foregroundStyle(.orange) }
-                        ModifierPicker(modifiers: $chord.modifiers)
-                        ActionEditor(binding: $chord.binding)
-                    }.padding(10).disabled(indicators.recording)
+                    if indicators.recording { Button("Cancel recording", action: indicators.cancelRecording).controlSize(.small) }
                 }
             }
-            Text("Record stops handling and listens only to your selected mouse. Press Start to resume. A first Left, Right or Middle Click keeps its normal click and drag.")
-                .font(.caption).foregroundStyle(.secondary)
-        }.onDisappear { indicators.cancelRecording() }
-    }
-    private func chordButton(_ title: String, chord: Binding<ChordBinding>, index: Int) -> some View {
-        let selected = chord.wrappedValue.buttons.count > index ? chord.wrappedValue.buttons[index] : 100 + index
-        return VStack(alignment: .leading, spacing: 5) {
-            Text("\(title) button").font(.caption).foregroundStyle(.secondary)
-            HStack(spacing: 6) {
-                Menu {
-                    Section("Mouse clicks") {
-                        ForEach(ChordButtonChoices.clicks, id: \.self) { button in
-                            Button(ChordButtonChoices.title(button)) { setButton(button, chord: chord, index: index) }
-                        }
-                    }
-                    Menu("Side buttons") {
-                        ForEach(ChordButtonChoices.sideButtons, id: \.self) { button in
-                            Button(ChordButtonChoices.title(button)) { setButton(button, chord: chord, index: index) }
-                        }
-                    }
-                    if !extras.isEmpty {
-                        Menu("Other detected or saved buttons") {
-                            ForEach(extras, id: \.self) { button in
-                                Button(ChordButtonChoices.title(button)) { setButton(button, chord: chord, index: index) }
+            ForEach(chord.buttons.indices, id: \.self) { index in
+                HStack(spacing: 8) {
+                    let title = index == 0 ? "First" : index == 1 ? "Second" : "Button \(index + 1)"
+                    Text(title).frame(width: 48, alignment: .trailing)
+                    Menu {
+                        Section("Mouse clicks") {
+                            ForEach(ChordButtonChoices.clicks, id: \.self) { button in
+                                Button(ChordButtonChoices.title(button)) { chord.buttons[index] = button }
                             }
                         }
-                    }
-                } label: { Text(ChordButtonChoices.title(selected)).frame(maxWidth: .infinity) }
-                    .menuStyle(.button).accessibilityLabel("\(title) mouse button")
-                Button("Record") {
-                    prepareRecording(); recordingTitle = "Recording \(title.lowercased()) button"
-                    let id = chord.wrappedValue.id
-                    indicators.recordButton { button in
-                        guard let position = profile.chords.firstIndex(where: { $0.id == id }) else { return }
-                        var values = profile.chords[position].buttons
-                        while values.count <= index { values.append(100 + values.count) }
-                        values[index] = button; profile.chords[position].buttons = values
-                    }
-                }.controlSize(.small).accessibilityLabel("Record \(title.lowercased()) mouse button")
+                        Menu("Side buttons") {
+                            ForEach(ChordButtonChoices.sideButtons, id: \.self) { button in
+                                Button(ChordButtonChoices.title(button)) { chord.buttons[index] = button }
+                            }
+                        }
+                        if !extras.isEmpty {
+                            Menu("Other detected or saved buttons") {
+                                ForEach(extras, id: \.self) { button in
+                                    Button(ChordButtonChoices.title(button)) { chord.buttons[index] = button }
+                                }
+                            }
+                        }
+                    } label: { Text(ChordButtonChoices.title(chord.buttons[index])).frame(maxWidth: .infinity) }
+                        .menuStyle(.button).accessibilityLabel("\(title) mouse button")
+                    Button("Record") {
+                        prepareRecording(); recordingTitle = "Recording \(title.lowercased()) button"
+                        indicators.recordButton { button in
+                            guard chord.buttons.indices.contains(index) else { return }; chord.buttons[index] = button
+                        }
+                    }.controlSize(.small).accessibilityLabel("Record \(title.lowercased()) mouse button")
+                }.disabled(indicators.recording)
             }
-        }.frame(maxWidth: .infinity)
-    }
-    private func setButton(_ button: Int, chord: Binding<ChordBinding>, index: Int) {
-        var values = chord.wrappedValue.buttons
-        while values.count <= index { values.append(100 + values.count) }
-        values[index] = button; chord.wrappedValue.buttons = values
+            if !chord.isValid { Text("Choose different mouse buttons.").font(.caption).foregroundStyle(.orange) }
+            ModifierPicker(modifiers: $chord.modifiers).disabled(indicators.recording)
+            TextField("Note", text: Binding(get: { chord.note ?? "" }, set: { chord.note = $0.isEmpty ? nil : String($0.prefix(160)) }))
+                .textFieldStyle(.roundedBorder).disabled(indicators.recording)
+            Text("Record stops handling. Press Start to resume after editing.").font(.caption).foregroundStyle(.secondary)
+        }
     }
 }
 
@@ -838,6 +951,12 @@ private func shortcutTitle(_ shortcut: Shortcut) -> String {
 }
 
 #if TAILORMOUSE_UI_PREVIEW
+func chordEditorPreview(expanded: Bool = false) -> some View {
+    let indicators = InputIndicators()
+    indicators.monitoringEnabled = false
+    return ChordActionSheet(initial: ChordBinding(buttons: [0,3], binding: ActionBinding(action: .shortcut, shortcut: Shortcut(keyCode: 51))),
+        isNew: expanded, indicators: indicators, prepareRecording: {}, save: { _ in })
+}
 func buttonEditorPreview(functionKey: Int? = nil) -> some View {
     ButtonActionSheet(title: "Button 7",
         initial: ActionBinding(action: .shortcut, shortcut: functionKey.map { Shortcut(keyCode: 127, modifiers: .option, functionKey: $0) } ?? Shortcut(keyCode: 123, modifiers: .option)),

@@ -62,4 +62,4 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun swift scripts/hid
 
 `rea-agents` is pinned to 6.4.0. Raw evidence stays in ignored `.local/evidence/`. Research notes distinguish static observations, inferred behavior and unanswered hardware questions. No proprietary binaries, user settings, account data or decompiler databases are uploaded.
 
-In **Chords**, choose Left/Right/Middle Click directly or use the Side buttons submenu. **Record** beside First or Second identifies a physical press and release from your selected mouse. Recording stops handling; press Start to resume afterward. Escape or Cancel abandons the capture. See [recording behavior and validation](docs/chord-recording.md).
+In **Chords**, click a gray function row to open its editor. Expand **Chord buttons & note** to choose Left/Right/Middle Click, use the Side buttons submenu, add a note, or use **Record** beside First or Second. Recording stops handling; press Start to resume afterward. Escape or Cancel abandons the capture. The table's + button adds a chord; OK commits editor changes and Cancel discards them. See [recording behavior and validation](docs/chord-recording.md).

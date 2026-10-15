@@ -69,8 +69,9 @@ public struct ChordBinding: Codable, Equatable, Identifiable {
     public var buttons: [Int]
     public var modifiers: ModifierMask
     public var binding: ActionBinding
-    public init(id: UUID = UUID(), buttons: [Int], modifiers: ModifierMask = [], binding: ActionBinding) {
-        self.id = id; self.buttons = buttons; self.modifiers = modifiers; self.binding = binding
+    public var note: String?
+    public init(id: UUID = UUID(), buttons: [Int], modifiers: ModifierMask = [], binding: ActionBinding, note: String? = nil) {
+        self.id = id; self.buttons = buttons; self.modifiers = modifiers; self.binding = binding; self.note = note
     }
     public var isValid: Bool {
         buttons.count >= 2 && Set(buttons).count == buttons.count && buttons.allSatisfy { (0...31).contains($0) || (100...111).contains($0) }

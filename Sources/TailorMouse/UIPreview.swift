@@ -31,8 +31,20 @@ struct TailorMouseUIRender {
         try render(ContentView(model: model), size: NSSize(width: 680, height: 510), to: output.appendingPathComponent("buttons-modifiers.png"))
         try render(ContentView(model: model, tabName: "Wheel"), size: NSSize(width: 680, height: 510), to: output.appendingPathComponent("wheel.png"))
         try render(ContentView(model: model, tabName: "Cursor"), size: NSSize(width: 680, height: 510), to: output.appendingPathComponent("cursor.png"))
-        model.configuration.defaultProfile.chords = [ChordBinding(buttons: [0,2], binding: ActionBinding(action: .shortcut, shortcut: Shortcut(keyCode:36)))]
+        model.configuration.defaultProfile.chords = [
+            ChordBinding(buttons: [0,3], binding: ActionBinding(action: .shortcut, shortcut: Shortcut(keyCode:51))),
+            ChordBinding(buttons: [1,3], binding: ActionBinding(action: .shortcut, shortcut: Shortcut(keyCode:36)), note: "Work"),
+            ChordBinding(buttons: [0,4], binding: ActionBinding(action: .disabled)),
+            ChordBinding(buttons: [1,4], binding: ActionBinding(action: .disabled)),
+            ChordBinding(buttons: [100,101], binding: ActionBinding(action: .copy)),
+            ChordBinding(buttons: [100,102], binding: ActionBinding(action: .disabled)),
+            ChordBinding(buttons: [100,103], binding: ActionBinding(action: .disabled)),
+            ChordBinding(buttons: [100,104], binding: ActionBinding(action: .disabled)),
+            ChordBinding(buttons: [100,105], binding: ActionBinding(action: .disabled))
+        ]
         try render(ContentView(model: model, tabName: "Chords"), size: NSSize(width:680,height:510), to: output.appendingPathComponent("chords.png"))
+        try render(chordEditorPreview(), size: NSSize(width:540,height:420), to: output.appendingPathComponent("chord-editor.png"))
+        try render(chordEditorPreview(expanded: true), size: NSSize(width:540,height:598), to: output.appendingPathComponent("chord-editor-buttons.png"))
     }
     private static func render<V: View>(_ view: V, size: NSSize, to url: URL) throws {
         let host = NSHostingView(rootView: view)

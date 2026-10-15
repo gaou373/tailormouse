@@ -2,6 +2,19 @@ import XCTest
 @testable import TailorMouseCore
 
 final class MouseButtonRecordingTests: XCTestCase {
+    func testLegacyChordWithoutNoteStillDecodes() throws {
+        let chord = ChordBinding(buttons:[0,100], binding:ActionBinding(action:.copy))
+        var json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(chord)) as! [String:Any]
+        json.removeValue(forKey:"note")
+        let restored = try JSONDecoder().decode(ChordBinding.self,from:JSONSerialization.data(withJSONObject:json))
+        XCTAssertEqual(restored,chord); XCTAssertNil(restored.note)
+    }
+    func testChordNoteRoundTripAndDraftIsolation() throws {
+        let saved = ChordBinding(buttons:[0,100],binding:ActionBinding(action:.copy),note:"Work")
+        var draft = saved; draft.buttons = [1,101]; draft.note = "Other"; draft.binding.action = .paste
+        XCTAssertEqual(saved.buttons,[0,100]); XCTAssertEqual(saved.note,"Work"); XCTAssertEqual(saved.binding.action,.copy)
+        XCTAssertEqual(try JSONDecoder().decode(ChordBinding.self,from:JSONEncoder().encode(draft)),draft)
+    }
     func testClearPrimaryLabelsAndNoUnobservedExtraChoices() {
         XCTAssertEqual(ChordButtonChoices.clicks.map(ChordButtonChoices.title), ["Left Click","Right Click","Middle Click"])
         XCTAssertEqual(ChordButtonChoices.sideButtons.map(ChordButtonChoices.title), (1...12).map { "Side Button \($0)" })

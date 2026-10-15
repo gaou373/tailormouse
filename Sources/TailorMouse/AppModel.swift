@@ -272,7 +272,7 @@ final class AppModel: ObservableObject {
                   return parts.count == 2 && Int(parts[0]).map(validButton) == true && UInt(parts[1]).map { $0 <= 15 } == true && validBinding(value)
               }),
               Set(profile.chords.map(\.id)).count == profile.chords.count,
-              profile.chords.allSatisfy({ $0.isValid && $0.modifiers.rawValue <= 15 && validBinding($0.binding) }) else { return false }
+              profile.chords.allSatisfy({ $0.isValid && $0.modifiers.rawValue <= 15 && ($0.note?.count ?? 0) <= 1000 && validBinding($0.binding) }) else { return false }
         return true
     }
 
