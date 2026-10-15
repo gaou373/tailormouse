@@ -49,12 +49,14 @@ final class MouseInterceptor {
         deinit { keyboardWork?.cancel(); mousePreludeWork?.cancel() }
     }
 
-    static var steerMouseIsRunning: Bool {
-        NSWorkspace.shared.runningApplications.contains {
+    static var steerMouseProcessIDs: Set<Int32> {
+        Set(NSWorkspace.shared.runningApplications.filter {
             $0.bundleIdentifier == "jp.plentycom.boa.SteerMouse" ||
             ($0.localizedName?.localizedCaseInsensitiveContains("SteerMouse Manager") ?? false)
-        }
+        }.map(\.processIdentifier))
     }
+
+    static var steerMouseIsRunning: Bool { !steerMouseProcessIDs.isEmpty }
 
     func start() -> String? {
         guard tap == nil else { return nil }

@@ -127,7 +127,13 @@ final class InputIndicators: ObservableObject {
     }
     private func observe(_ type: CGEventType, _ event: CGEvent) {
         guard [.leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp, .otherMouseDown, .otherMouseUp, .keyDown, .keyUp].contains(type) else { return }
-        guard event.getIntegerValueField(.eventSourceUserData) != 0x5441494c4f52 else { return }
+        // SteerMouse output retains the Naga sender ID. Ignore both edges before
+        // hover detection or recording; the shared raw reader still identifies
+        // the original Bluetooth side button. Resolve live PIDs across restarts.
+        guard InputInspectionOrigin.acceptsQuartz(
+            processID: event.getIntegerValueField(.eventSourceUnixProcessID),
+            userData: event.getIntegerValueField(.eventSourceUserData),
+            remapperProcessIDs: MouseInterceptor.steerMouseProcessIDs) else { return }
         let sender = UInt64(bitPattern: event.getIntegerValueField(CGEventField(rawValue: 87)!))
         guard let device = DeviceEndpoint.matching(senderID: sender, in: devices()),
               family() == nil || family() == device.identity.canonicalFamily else { return }
