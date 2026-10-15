@@ -200,11 +200,13 @@ public struct ProfileConfiguration: Codable, Equatable {
     public var appProfiles: [MouseProfile]
     public var selectedDeviceFamily: String?
     public var nagaKeyboardLayouts: [String: NagaKeyboardLayout]
-    public init(defaultProfile: MouseProfile = MouseProfile(), appProfiles: [MouseProfile] = [], selectedDeviceFamily: String? = "razer.naga.pro", nagaKeyboardLayouts: [String: NagaKeyboardLayout] = [:]) {
+    public var nagaWiredTrackingReference: NativePointerValues?
+    public init(defaultProfile: MouseProfile = MouseProfile(), appProfiles: [MouseProfile] = [], selectedDeviceFamily: String? = "razer.naga.pro", nagaKeyboardLayouts: [String: NagaKeyboardLayout] = [:], nagaWiredTrackingReference: NativePointerValues? = nil) {
         self.defaultProfile = defaultProfile; self.appProfiles = appProfiles; self.selectedDeviceFamily = selectedDeviceFamily
         self.nagaKeyboardLayouts = nagaKeyboardLayouts
+        self.nagaWiredTrackingReference = nagaWiredTrackingReference
     }
-    private enum CodingKeys: String, CodingKey { case schemaVersion, defaultProfile, appProfiles, selectedDeviceFamily, nagaKeyboardLayouts }
+    private enum CodingKeys: String, CodingKey { case schemaVersion, defaultProfile, appProfiles, selectedDeviceFamily, nagaKeyboardLayouts, nagaWiredTrackingReference }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let version = try c.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
@@ -213,6 +215,10 @@ public struct ProfileConfiguration: Codable, Equatable {
         appProfiles = try c.decodeIfPresent([MouseProfile].self, forKey: .appProfiles) ?? []
         selectedDeviceFamily = c.contains(.selectedDeviceFamily) ? try c.decodeIfPresent(String.self, forKey: .selectedDeviceFamily) : "razer.naga.pro"
         nagaKeyboardLayouts = try c.decodeIfPresent([String: NagaKeyboardLayout].self, forKey: .nagaKeyboardLayouts) ?? [:]
+        nagaWiredTrackingReference = try c.decodeIfPresent(NativePointerValues.self, forKey: .nagaWiredTrackingReference)
+        guard nagaWiredTrackingReference?.isValidReference ?? true else {
+            throw DecodingError.dataCorruptedError(forKey: .nagaWiredTrackingReference, in: c, debugDescription: "Invalid wired tracking reference")
+        }
         guard nagaKeyboardLayouts.values.allSatisfy(\.isValid) else {
             throw DecodingError.dataCorruptedError(forKey: .nagaKeyboardLayouts, in: c, debugDescription: "Invalid Naga keyboard calibration")
         }
@@ -224,6 +230,7 @@ public struct ProfileConfiguration: Codable, Equatable {
         try c.encode(defaultProfile, forKey: .defaultProfile)
         try c.encode(appProfiles, forKey: .appProfiles)
         try c.encode(nagaKeyboardLayouts, forKey: .nagaKeyboardLayouts)
+        try c.encodeIfPresent(nagaWiredTrackingReference, forKey: .nagaWiredTrackingReference)
         if let selectedDeviceFamily { try c.encode(selectedDeviceFamily, forKey: .selectedDeviceFamily) }
         else { try c.encodeNil(forKey: .selectedDeviceFamily) }
     }

@@ -39,6 +39,11 @@ final class AppModel: ObservableObject {
         indicators.beginModifiers()
         pointer.configuration = { [weak self] in self?.configuration ?? ProfileConfiguration() }
         pointer.profile = { [weak self] in self?.configuration.profile(for: NSWorkspace.shared.frontmostApplication?.bundleIdentifier) ?? MouseProfile() }
+        pointer.captureWiredReference = { [weak self] values in
+            guard let self, values.isValidReference, self.configuration.nagaWiredTrackingReference == nil else { return }
+            self.hasEdits = true
+            self.configuration.nagaWiredTrackingReference = values
+        }
         pointer.failed = { [weak self] message in self?.stop(); self?.status = message; self?.writeRuntimeStatus() }
         if FileManager.default.fileExists(atPath: settingsURL.path) {
             do {

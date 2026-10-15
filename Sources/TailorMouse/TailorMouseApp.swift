@@ -17,6 +17,10 @@ struct TailorMouseApp: App {
         }
         .defaultSize(width: 680, height: 510)
         .commands {
+            CommandGroup(replacing: .appTermination) {
+                Button("Quit TailorMouse") { model.stop(); NSApp.terminate(nil) }
+                    .keyboardShortcut("q", modifiers: .command)
+            }
             CommandGroup(after: .newItem) {
                 Button("Import Profiles…", action: model.importProfiles)
                 Button("Export Profiles…", action: model.exportProfiles)
@@ -645,7 +649,7 @@ private struct CursorView: View {
                 TrackingControl(title: "Acceleration", value: Binding(get: { profile.pointerAcceleration ?? min(5, pointer.systemAcceleration) }, set: { profile.pointerAcceleration = $0 }), range: 0...5)
                 TrackingControl(title: "Sensitivity", value: Binding(get: { profile.pointerSensitivity ?? 1 }, set: { profile.pointerSensitivity = $0 }), range: 0.25...4)
             }.disabled(!pointer.supported)
-            Button("Restore System Tracking") { profile.pointerAcceleration = nil; profile.pointerSensitivity = nil }
+            Button("Reset Tracking Adjustments") { profile.pointerAcceleration = nil; profile.pointerSensitivity = nil }
             Text(pointer.message).font(.callout).foregroundStyle(.secondary)
             Divider()
             Text("Hardware DPI · Wired Naga Pro").font(.headline)

@@ -50,17 +50,21 @@ public enum WheelActionRouter {
     }
 }
 
-public struct NativePointerValues: Equatable {
+public struct NativePointerValues: Codable, Equatable {
     public let resolution: Int64
     public let acceleration: Int64
     public init(resolution: Int64, acceleration: Int64) { self.resolution = resolution; self.acceleration = acceleration }
-    public func target(profile: MouseProfile) throws -> Self {
+    public var isValidReference: Bool {
+        resolution > 0 && resolution <= Int64(Int32.max) && (-65536...Int64(Int32.max)).contains(acceleration)
+    }
+    public func target(profile: MouseProfile, reference: Self? = nil) throws -> Self {
+        let baseline = reference ?? self
         let gain = profile.pointerSensitivity ?? 1
-        guard gain.isFinite, (0.25...4).contains(gain), resolution > 0, resolution <= Int64(Int32.max),
+        guard gain.isFinite, (0.25...4).contains(gain), baseline.isValidReference,
               profile.pointerAcceleration.map({ $0.isFinite && (0...5).contains($0) }) ?? true else { throw NativePointerError.invalid }
-        let scaled = Double(resolution) / gain
+        let scaled = Double(baseline.resolution) / gain
         guard scaled >= 1, scaled <= Double(Int32.max) else { throw NativePointerError.invalid }
-        return Self(resolution: Int64(scaled.rounded()), acceleration: profile.pointerAcceleration.map { Int64(($0 * 65536).rounded()) } ?? acceleration)
+        return Self(resolution: Int64(scaled.rounded()), acceleration: profile.pointerAcceleration.map { Int64(($0 * 65536).rounded()) } ?? baseline.acceleration)
     }
 }
 public enum NativePointerError: Error { case invalid, writeFailed, readbackFailed, recoveryFailed }

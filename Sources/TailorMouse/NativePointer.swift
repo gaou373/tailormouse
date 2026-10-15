@@ -12,15 +12,32 @@ final class NativePointer: ObservableObject {
     @Published private(set) var systemAcceleration = 0.8
     @Published private(set) var supported = false
     private var client: IOHIDEventSystemClient?
-    private struct Saved { let service: IOHIDServiceClient; let values: NativePointerValues }
+    private struct Saved { let values: NativePointerValues }
     private var saved: [UInt64: Saved] = [:]
     private var active = false
     var configuration: () -> ProfileConfiguration = { ProfileConfiguration() }
     var profile: () -> MouseProfile = { MouseProfile() }
+    var captureWiredReference: (NativePointerValues) -> Void = { _ in }
     var failed: (String) -> Void = { _ in }
     private var pending: DispatchWorkItem?
     private var timer: Timer?
-    private var signature: [UInt64: NativePointerValues] = [:]
+
+    private func identity(_ service: IOHIDServiceClient) -> DeviceIdentity {
+        let vendor = (IOHIDServiceClientCopyProperty(service, "VendorID" as CFString) as? NSNumber)?.intValue ?? 0
+        let product = (IOHIDServiceClientCopyProperty(service, "ProductID" as CFString) as? NSNumber)?.intValue ?? 0
+        let transport = IOHIDServiceClientCopyProperty(service, "Transport" as CFString) as? String ?? ""
+        return DeviceIdentity(vendorID: vendor, productID: product, transport: transport, product: "")
+    }
+    private var usingNagaReference: Bool {
+        configuration().selectedDeviceFamily == "razer.naga.pro" && configuration().nagaWiredTrackingReference != nil
+    }
+    private func currentServices() -> [UInt64: IOHIDServiceClient] {
+        var result: [UInt64: IOHIDServiceClient] = [:]
+        for service in (client.flatMap { IOHIDEventSystemClientCopyServices($0) } as? [IOHIDServiceClient]) ?? [] {
+            result[Self.id(service)] = service
+        }
+        return result
+    }
 
     func services() -> [IOHIDServiceClient] {
         // An unscheduled long-lived client can retain the pre-reconnect service
@@ -55,8 +72,11 @@ final class NativePointer: ObservableObject {
     func inspect() {
         let available = services().compactMap { try? Self.read($0) }
         supported = !available.isEmpty
-        if let first = available.first, !active { systemAcceleration = max(0, Double(first.acceleration) / 65536) }
-        if !active { message = supported ? "Changes take effect while Running. Stop restores your original tracking." : "Connect a supported mouse to adjust tracking." }
+        let displayed = usingNagaReference ? configuration().nagaWiredTrackingReference : available.first
+        if let displayed, !active { systemAcceleration = max(0, Double(displayed.acceleration) / 65536) }
+        if !active {
+            message = supported ? (usingNagaReference ? "Shared tracking uses your wired USB reference. Press Start to apply it." : "Changes take effect while Running. Connect by USB cable once to establish shared Naga tracking.") : "Connect a supported mouse to adjust tracking."
+        }
     }
     func start() {
         active = true; update()
@@ -75,30 +95,49 @@ final class NativePointer: ObservableObject {
             let available = services(); supported = !available.isEmpty
             let present = Set(available.map(Self.id))
             // Restore connected devices excluded by a changed family selection.
-            let connected = Set(((client.flatMap { IOHIDEventSystemClientCopyServices($0) } as? [IOHIDServiceClient]) ?? []).map(Self.id))
+            let connected = currentServices()
             for id in Array(saved.keys) where !present.contains(id) {
-                if connected.contains(id), let original = saved[id] {
-                    try NativePointerTransaction.apply(before: Self.read(original.service), target: original.values,
-                        write: { try Self.write(original.service, property: $0, value: $1) }, read: { try Self.read(original.service) })
+                if let service = connected[id], let original = saved[id] {
+                    try NativePointerTransaction.apply(before: Self.read(service), target: original.values,
+                        write: { try Self.write(service, property: $0, value: $1) }, read: { try Self.read(service) })
                 }
-                saved.removeValue(forKey: id); signature.removeValue(forKey: id)
+                saved.removeValue(forKey: id)
             }
             for service in available {
                 let id = Self.id(service)
                 if saved[id] == nil {
                     let values = try Self.read(service)
-                    saved[id] = Saved(service: service, values: values)
+                    saved[id] = Saved(values: values)
                     systemAcceleration = max(0, Double(values.acceleration) / 65536)
                 }
+            }
+            // Capture once from the preferred wired connection before scaling
+            // any service. Restoration snapshots stay separate per service.
+            if configuration().nagaWiredTrackingReference == nil {
+                let wired = available.filter {
+                    let device = identity($0)
+                    return device.vendorID == 0x1532 && device.productID == 0x008f && device.transport.lowercased() == "usb"
+                }
+                if wired.count == 1, let original = saved[Self.id(wired[0])], original.values.isValidReference {
+                    captureWiredReference(original.values)
+                }
+            }
+            let selectedProfile = profile()
+            let reference = configuration().nagaWiredTrackingReference
+            for service in available {
+                let id = Self.id(service)
                 guard let original = saved[id] else { continue }
-                let target = try original.values.target(profile: profile())
-                guard signature[id] != target else { continue }
+                let shared = identity(service).canonicalFamily == "razer.naga.pro" ? reference : nil
+                let target = try original.values.target(profile: selectedProfile, reference: shared)
+                if let shared { systemAcceleration = max(0, Double(shared.acceleration) / 65536) }
+                // Receiver services may survive a physical transport switch.
+                // Read current values even if the desired target is unchanged.
                 let before = try Self.read(service)
+                guard before != target else { continue }
                 try NativePointerTransaction.apply(before: before, target: target,
                     write: { try Self.write(service, property: $0, value: $1) }, read: { try Self.read(service) })
-                signature[id] = target
             }
-            message = supported ? "Live tracking enabled. Stop restores your original tracking." : "Waiting for a supported mouse."
+            message = supported ? (usingNagaReference ? "Shared tracking enabled for USB, receiver and Bluetooth. Stop restores each connection's original tracking." : "Live tracking enabled. Connect by USB cable once to establish shared Naga tracking.") : "Waiting for a supported mouse."
         } catch {
             stop(); message = "Tracking could not be verified. Original settings were restored where available."
             failed(message)
@@ -106,15 +145,20 @@ final class NativePointer: ObservableObject {
     }
     func stop() {
         active = false; pending?.cancel(); pending = nil; timer?.invalidate(); timer = nil
-        var restoreFailed = false
-        for original in saved.values {
+        // Retained clients can report pre-write values. Restore and verify on
+        // a fresh service snapshot; disconnected services need no writes.
+        client = TMCreatePointerClient()
+        let connected = currentServices()
+        var restoreFailed = client == nil && !saved.isEmpty
+        for (id, original) in saved {
+            guard let service = connected[id] else { continue }
             do {
-                let before = try Self.read(original.service)
+                let before = try Self.read(service)
                 try NativePointerTransaction.apply(before: before, target: original.values,
-                    write: { try Self.write(original.service, property: $0, value: $1) }, read: { try Self.read(original.service) })
+                    write: { try Self.write(service, property: $0, value: $1) }, read: { try Self.read(service) })
             } catch { restoreFailed = true }
         }
-        saved.removeAll(); signature.removeAll()
+        saved.removeAll()
         message = restoreFailed ? "Some tracking settings could not be restored; reconnect the mouse." : "Original tracking restored."
     }
 }
