@@ -50,17 +50,36 @@ public struct Shortcut: Codable, Equatable {
     }
 }
 
+public enum ShortcutBehavior: String, Codable, CaseIterable, Identifiable {
+    case tap, hold, repeatWhileHeld
+    public var id: String { rawValue }
+    public var title: String {
+        switch self {
+        case .tap: return "Press once"
+        case .hold: return "Hold until release"
+        case .repeatWhileHeld: return "Hold and repeat"
+        }
+    }
+}
+
 public struct ActionBinding: Codable, Equatable {
     public var action: ButtonAction
     public var shortcut: Shortcut?
+    public var shortcutBehavior: ShortcutBehavior?
     public var mouseButton: Int
     public var scrollX: Int
     public var scrollY: Int
     public var openTarget: String?
     public var snapDestination: String?
-    public init(action: ButtonAction = .passthrough, shortcut: Shortcut? = nil, mouseButton: Int = 0, scrollX: Int = 0, scrollY: Int = 3, openTarget: String? = nil, snapDestination: String? = nil) {
+    public init(action: ButtonAction = .passthrough, shortcut: Shortcut? = nil, mouseButton: Int = 0, scrollX: Int = 0, scrollY: Int = 3, openTarget: String? = nil, snapDestination: String? = nil, shortcutBehavior: ShortcutBehavior? = nil) {
         self.action = action; self.shortcut = shortcut; self.mouseButton = mouseButton; self.scrollX = scrollX; self.scrollY = scrollY
         self.openTarget = openTarget; self.snapDestination = snapDestination
+        self.shortcutBehavior = shortcutBehavior
+    }
+    public var heldShortcut: Shortcut? {
+        guard action == .shortcut, let shortcut, shortcut.isValid,
+              shortcutBehavior == .hold || shortcutBehavior == .repeatWhileHeld else { return nil }
+        return shortcut
     }
 }
 

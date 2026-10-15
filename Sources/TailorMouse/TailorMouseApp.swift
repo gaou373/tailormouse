@@ -420,7 +420,16 @@ private struct ActionDetails: View {
                 ModifierPicker(modifiers: Binding(get: { binding.shortcut?.modifiers ?? [] }, set: { flags in
                     var shortcut = binding.shortcut ?? Shortcut(keyCode: 0); shortcut.modifiers = flags; binding.shortcut = shortcut
                 }))
-                Text("Shortcuts run once per button press.").font(.caption).foregroundStyle(.secondary)
+                if wheel {
+                    Text("Wheel shortcuts run once per scroll step.").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Picker("Behavior", selection: Binding(get: { binding.shortcutBehavior ?? .tap }, set: { binding.shortcutBehavior = $0 == .tap ? nil : $0 })) {
+                        ForEach(ShortcutBehavior.allCases) { Text($0.title).tag($0) }
+                    }
+                    Text(binding.shortcutBehavior == .repeatWhileHeld ? "Keeps the key down and repeats at your keyboard's rate until you release the button." :
+                         binding.shortcutBehavior == .hold ? "Keeps the key down until you release the button." : "Runs once per button press.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 if binding.shortcut?.functionKey != nil {
                     Text("F21–F24 use macOS function characters; the receiving app must support them.").font(.caption).foregroundStyle(.secondary)
                 }

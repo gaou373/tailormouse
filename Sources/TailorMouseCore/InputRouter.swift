@@ -1,9 +1,13 @@
 import Foundation
 
+public enum InputEmissionPhase { case complete, down, up }
 public struct InputEmission: Equatable {
     public let button: Int
     public let binding: ActionBinding
-    public init(button: Int, binding: ActionBinding) { self.button = button; self.binding = binding }
+    public let phase: InputEmissionPhase
+    public init(button: Int, binding: ActionBinding, phase: InputEmissionPhase = .complete) {
+        self.button = button; self.binding = binding; self.phase = phase
+    }
 }
 public struct RoutingDecision: Equatable {
     public let suppress: Bool
@@ -11,7 +15,7 @@ public struct RoutingDecision: Equatable {
     public init(suppress: Bool, emissions: [InputEmission] = []) { self.suppress = suppress; self.emissions = emissions }
 }
 
-/// Complete actions are emitted once. Physical releases retain their press-time suppression decision.
+/// Actions retain their press-time mapping; held shortcuts emit matched edges.
 /// Chord candidates defer extra-button clicks; unmatched candidates replay complete single actions.
 public struct InputRouter {
     private struct Press {
@@ -19,10 +23,19 @@ public struct InputRouter {
         var suppress: Bool
         var pending: Bool
         var candidates: [ChordBinding]
+        var held = false
     }
+    private struct HeldChord { let members: Set<Int>; let binding: ActionBinding }
     private var active: [Int: Press] = [:]
+    private var heldChords: [Int: HeldChord] = [:]
     public init() {}
-    public mutating func reset() { active.removeAll() }
+    @discardableResult public mutating func reset() -> [InputEmission] {
+        let releases = active.keys.sorted().compactMap { button -> InputEmission? in
+            guard let press = active[button], press.held else { return nil }
+            return InputEmission(button: button, binding: press.binding, phase: .up)
+        } + heldChords.keys.sorted().map { InputEmission(button: $0, binding: heldChords[$0]!.binding, phase: .up) }
+        active.removeAll(); heldChords.removeAll(); return releases
+    }
     public mutating func route(button: Int, phase: ButtonPhase, profile: MouseProfile, modifiers: ModifierMask = []) -> RoutingDecision {
         guard (0...31).contains(button) || (100...111).contains(button) else { return RoutingDecision(suppress: false) }
         switch phase {
@@ -30,9 +43,18 @@ public struct InputRouter {
             return RoutingDecision(suppress: active[button]?.suppress ?? false)
         case .up:
             guard let press = active.removeValue(forKey: button) else { return RoutingDecision(suppress: false) }
-            guard press.pending else { return RoutingDecision(suppress: press.suppress) }
-            var emissions = press.suppress ? [InputEmission(button: button, binding: press.binding)] : []
-            emissions += flushPending()
+            var emissions: [InputEmission] = []
+            for owner in heldChords.keys.sorted() where heldChords[owner]!.members.contains(button) {
+                let chord = heldChords.removeValue(forKey: owner)!
+                emissions.append(InputEmission(button: owner, binding: chord.binding, phase: .up))
+            }
+            if press.held { emissions.append(InputEmission(button: button, binding: press.binding, phase: .up)) }
+            if press.pending {
+                // The physical button is already up: replay a complete tap,
+                // even if its single-button mapping normally supports holds.
+                if press.suppress { emissions.append(InputEmission(button: button, binding: press.binding)) }
+                emissions += flushPending()
+            }
             return RoutingDecision(suppress: press.suppress, emissions: emissions)
         case .down:
             if let press = active[button] { return RoutingDecision(suppress: press.suppress) }
@@ -54,7 +76,9 @@ public struct InputRouter {
                         // whole pair. Earlier native primary clicks keep their up.
                         active[button]?.suppress = true
                         for member in pressed { active[member]?.pending = false; active[member]?.candidates = [] }
-                        return RoutingDecision(suppress: true, emissions: [InputEmission(button: button, binding: chord.binding)])
+                        let held = chord.binding.heldShortcut != nil
+                        if held { heldChords[button] = HeldChord(members: pressed, binding: chord.binding) }
+                        return RoutingDecision(suppress: true, emissions: [InputEmission(button: button, binding: chord.binding, phase: held ? .down : .complete)])
                     }
                     return RoutingDecision(suppress: !nativeClick)
                 }
@@ -67,7 +91,11 @@ public struct InputRouter {
             }
             let suppress = binding.action != .passthrough
             active[button] = Press(binding: binding, suppress: suppress, pending: false, candidates: [])
-            if suppress { emissions.append(InputEmission(button: button, binding: binding)) }
+            if suppress {
+                let held = binding.heldShortcut != nil
+                active[button]?.held = held
+                emissions.append(InputEmission(button: button, binding: binding, phase: held ? .down : .complete))
+            }
             return RoutingDecision(suppress: suppress, emissions: emissions)
         }
     }
@@ -76,7 +104,9 @@ public struct InputRouter {
         return buttons.compactMap { button in
             guard let press = active[button] else { return nil }
             active[button]?.pending = false; active[button]?.candidates = []
-            return press.suppress ? InputEmission(button: button, binding: press.binding) : nil
+            let held = press.binding.heldShortcut != nil
+            active[button]?.held = press.suppress && held
+            return press.suppress ? InputEmission(button: button, binding: press.binding, phase: held ? .down : .complete) : nil
         }
     }
 }

@@ -13,6 +13,8 @@ final class MouseInterceptor {
     private let senderField = CGEventField(rawValue: 87)!
     private var keyboardToken: UInt64 = 0
     private var requestedAccessibilityApproval = false
+    private var heldShortcuts = HeldShortcuts()
+    private var shortcutRepeatWork: DispatchWorkItem?
     private let bluetoothInput = BluetoothNagaInput()
     var bluetoothEndpointCount: Int { bluetoothInput.endpointCount }
     var configuration: () -> ProfileConfiguration = { ProfileConfiguration() }
@@ -30,6 +32,7 @@ final class MouseInterceptor {
         let keySequences: [[UInt16]]
     }
     private final class InputState {
+        let shortcutSource = UUID().uuidString
         var router = InputRouter()
         var wheel = WheelTransformer()
         var mappedWheel = WheelTransformer()
@@ -132,6 +135,8 @@ final class MouseInterceptor {
 
     func stop() {
         timer?.invalidate(); timer = nil
+        shortcutRepeatWork?.cancel(); shortcutRepeatWork = nil
+        for event in heldShortcuts.releaseAll() { postHeldShortcut(event) }
         bluetoothInput.stop(); bluetoothConnections.removeAll()
         for state in states.values { releaseRawPassthrough(state) }
         if let tap { CGEvent.tapEnable(tap: tap, enable: false); CFMachPortInvalidate(tap) }
@@ -358,6 +363,9 @@ final class MouseInterceptor {
         }
     }
     private func releaseRawPassthrough(_ state: InputState) {
+        for event in heldShortcuts.release(source: state.shortcutSource) { postHeldShortcut(event) }
+        scheduleShortcutRepeats()
+        state.router.reset()
         for key in state.rawPassthroughKeys.takeReleases() {
             guard let up = CGEvent(keyboardEventSource: nil, virtualKey: key, keyDown: false) else { continue }
             up.flags = CGEventSource.flagsState(.combinedSessionState); post(up)
@@ -416,6 +424,18 @@ final class MouseInterceptor {
     }
 
     private func execute(_ emission: InputEmission, state: InputState, fallback: CGEvent) {
+        let owner = ShortcutHoldOwner(source: state.shortcutSource, button: emission.button)
+        if emission.phase == .up {
+            for event in heldShortcuts.release(owner: owner) { postHeldShortcut(event) }
+            scheduleShortcutRepeats(); return
+        }
+        if emission.phase == .down, let shortcut = emission.binding.heldShortcut {
+            let events = heldShortcuts.press(owner: owner, shortcut: shortcut,
+                repeating: emission.binding.shortcutBehavior == .repeatWhileHeld,
+                now: ProcessInfo.processInfo.systemUptime, delay: NSEvent.keyRepeatDelay, interval: NSEvent.keyRepeatInterval)
+            for event in events { postHeldShortcut(event) }
+            scheduleShortcutRepeats(); return
+        }
         let origin = state.origins[emission.button] ?? fallback
         if emission.binding.action == .passthrough, let keys = state.keyboardReplayKeys[emission.button] {
             for original in state.keyboardMouseReplay[emission.button] ?? [] { post(original.event) }
@@ -513,6 +533,29 @@ final class MouseInterceptor {
         }
         guard events.count == 2 else { return }
         for event in events { post(event) }
+    }
+
+    private func postHeldShortcut(_ output: HeldShortcutEvent) {
+        let edge = output.edge
+        guard let event = CGEvent(keyboardEventSource: nil, virtualKey: edge.keyCode, keyDown: edge.phase == .down) else { return }
+        event.flags = eventFlags(edge.modifiers)
+        if edge.unicode != nil || ShortcutKeyChoice.nativeFunctionCodes.contains(edge.keyCode) { event.flags.insert(.maskSecondaryFn) }
+        if var character = edge.unicode { event.keyboardSetUnicodeString(stringLength: 1, unicodeString: &character) }
+        event.setIntegerValueField(.keyboardEventAutorepeat, value: output.isRepeat ? 1 : 0)
+        event.location = CGEvent(source: nil)?.location ?? .zero
+        post(event)
+    }
+
+    private func scheduleShortcutRepeats() {
+        shortcutRepeatWork?.cancel(); shortcutRepeatWork = nil
+        guard tap != nil, let deadline = heldShortcuts.nextDeadline else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.tap != nil else { return }
+            for event in self.heldShortcuts.repeats(now: ProcessInfo.processInfo.systemUptime) { self.postHeldShortcut(event) }
+            self.scheduleShortcutRepeats()
+        }
+        shortcutRepeatWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0.001, deadline - ProcessInfo.processInfo.systemUptime), execute: work)
     }
 
     private func click(button: Int, location: CGPoint, flags: CGEventFlags) {
