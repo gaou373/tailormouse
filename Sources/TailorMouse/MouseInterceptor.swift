@@ -15,10 +15,12 @@ final class MouseInterceptor {
     private var requestedAccessibilityApproval = false
     private var heldShortcuts = HeldShortcuts()
     private var shortcutRepeatWork: DispatchWorkItem?
+    private var modifierState = NagaModifierState()
     private let bluetoothInput = BluetoothNagaInput()
     var bluetoothEndpointCount: Int { bluetoothInput.endpointCount }
     var configuration: () -> ProfileConfiguration = { ProfileConfiguration() }
     var devices: () -> [DetectedDevice] = { [] }
+    var keyboardModifiers: () -> ModifierMask = { [] }
     var stopped: (String) -> Void = { _ in }
     var observed: (String) -> Void = { _ in }
     var observedButton: (Int, ButtonPhase) -> Void = { _, _ in }
@@ -81,7 +83,7 @@ final class MouseInterceptor {
         }
         let types: [CGEventType] = [.leftMouseDown, .leftMouseUp, .leftMouseDragged,
             .rightMouseDown, .rightMouseUp, .rightMouseDragged, .otherMouseDown,
-            .otherMouseUp, .otherMouseDragged, .scrollWheel, .mouseMoved, .keyDown, .keyUp]
+            .otherMouseUp, .otherMouseDragged, .scrollWheel, .mouseMoved, .keyDown, .keyUp, .flagsChanged]
         let mask = types.reduce(CGEventMask(0)) { $0 | (CGEventMask(1) << $1.rawValue) }
         guard let newTap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap,
             options: .defaultTap, eventsOfInterest: mask, callback: { _, type, event, context in
@@ -95,6 +97,7 @@ final class MouseInterceptor {
             return "macOS could not create the event run loop."
         }
         tap = newTap; source = runLoopSource; states.removeAll()
+        modifierState.begin(snapshot: keyboardModifiers().union(modifierMask(CGEventSource.flagsState(.hidSystemState))))
         CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: newTap, enable: true)
         bluetoothInput.report = { [weak self] id, reportID, bytes in self?.handleBluetooth(id, reportID: reportID, bytes: bytes) }
@@ -135,6 +138,7 @@ final class MouseInterceptor {
 
     func stop() {
         timer?.invalidate(); timer = nil
+        modifierState.reset()
         shortcutRepeatWork?.cancel(); shortcutRepeatWork = nil
         for event in heldShortcuts.releaseAll() { postHeldShortcut(event) }
         bluetoothInput.stop(); bluetoothConnections.removeAll()
@@ -157,6 +161,17 @@ final class MouseInterceptor {
         let config = configuration()
         let sender = UInt64(bitPattern: event.getIntegerValueField(senderField))
         let device = DeviceEndpoint.matching(senderID: sender, in: devices())
+        if type == .flagsChanged {
+            // Mouse-generated modifier reports must not clear modifiers held on
+            // the user's separate keyboard. No ordinary keyboard keys are read.
+            if device?.identity.canonicalFamily != "razer.naga.pro" {
+                modifierState.changed(modifierMask(event.flags))
+            }
+            return Unmanaged.passUnretained(event)
+        }
+        let modifiers = device?.identity.canonicalFamily == "razer.naga.pro"
+            ? modifierState.resolve(event: modifierMask(event.flags), hardware: modifierMask(CGEventSource.flagsState(.hidSystemState)))
+            : modifierMask(event.flags)
         let keyboard = type == .keyDown || type == .keyUp
         let movement = [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged].contains(type)
         if keyboard {
@@ -221,7 +236,7 @@ final class MouseInterceptor {
             var wheelMapped = false
             if event.getIntegerValueField(.scrollWheelEventIsContinuous) == 0 {
                 let mapped = WheelActionRouter.route(deltas: [event.getIntegerValueField(.scrollWheelEventDeltaAxis1), event.getIntegerValueField(.scrollWheelEventDeltaAxis2)],
-                    continuous: false, profile: profile, modifiers: modifierMask(event.flags))
+                    continuous: false, profile: profile, modifiers: modifiers)
                 for action in mapped {
                     let axis = action.axis
                     var binding = action.binding
@@ -262,7 +277,7 @@ final class MouseInterceptor {
             default: return Unmanaged.passUnretained(event)
             }
         if phase == .down && state.origins[button] == nil { state.origins[button] = event.copy() }
-        let decision = state.router.route(button: button, phase: phase, profile: profile, modifiers: modifierMask(event.flags))
+        let decision = state.router.route(button: button, phase: phase, profile: profile, modifiers: modifiers)
         for emission in decision.emissions { execute(emission, state: state, fallback: event) }
         if phase == .up { state.origins.removeValue(forKey: button) }
         if phase != .drag {
@@ -281,8 +296,12 @@ final class MouseInterceptor {
         state.keyboardEvents[token] = event.copy()
         if fromRaw { state.rawKeyboardTokens.insert(token) }
         if let prelude { state.keyboardPreludes[token] = prelude }
+        // The stable keyboard transition snapshot survives mouse reports that
+        // clear the polled hardware table. Releases retain down-time modifiers.
+        let modifiers = modifierState.resolve(event: modifierMask(event.flags),
+            hardware: modifierMask(CGEventSource.flagsState(.hidSystemState)))
         let input = NagaKeyboardInput(token: token, keyCode: UInt16(clamping: event.getIntegerValueField(.keyboardEventKeycode)),
-            phase: type == .keyDown ? .down : .up, modifiers: modifierMask(event.flags), profile: profile)
+            phase: type == .keyDown ? .down : .up, modifiers: modifiers, profile: profile)
         let result = state.keyboard.route(input, now: ProcessInfo.processInfo.systemUptime, layout: layout)
         processKeyboard(result.dispatches, state: state, transport: device.identity.transport)
         scheduleKeyboardExpiry(state: state, connection: device.connectionID, transport: device.identity.transport)
@@ -324,7 +343,8 @@ final class MouseInterceptor {
                 }
             }
             let detail = decision.suppress ? "handled" : "passthrough"
-            let message = "Naga side \(input.button - 99) · \(input.phase == .down ? "pressed" : "released") · \(detail) · \(transport)"
+            let flags = input.modifiers.isEmpty ? "" : "\(input.modifiers.title) · "
+            let message = "Naga side \(input.button - 99) · \(input.phase == .down ? "pressed" : "released") · \(flags)\(detail) · \(transport)"
             DispatchQueue.main.async { [weak self] in self?.observedButton(input.button, input.phase); self?.observed(message) }
             if input.phase == .up {
                 state.origins.removeValue(forKey: input.button)
@@ -351,7 +371,7 @@ final class MouseInterceptor {
         for input in state.bluetoothReports.route(reportID: reportID, bytes: bytes) {
             guard NagaBluetoothReportDecoder.handles(keyCode: input.keyCode, layout: layout),
                   let event = CGEvent(keyboardEventSource: nil, virtualKey: input.keyCode, keyDown: input.phase == .down) else { continue }
-            var flags = CGEventSource.flagsState(.combinedSessionState)
+            var flags = eventFlags(modifierState.resolve(event: [], hardware: modifierMask(CGEventSource.flagsState(.hidSystemState))))
             if input.modifiers.contains(.command) { flags.insert(.maskCommand) }
             if input.modifiers.contains(.shift) { flags.insert(.maskShift) }
             if input.modifiers.contains(.option) { flags.insert(.maskAlternate) }

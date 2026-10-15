@@ -23,6 +23,7 @@ public struct InputRouter {
         var suppress: Bool
         var pending: Bool
         var candidates: [ChordBinding]
+        var chordBindings: [ChordBinding] = []
         var held = false
     }
     private struct HeldChord { let members: Set<Int>; let binding: ActionBinding }
@@ -60,6 +61,36 @@ public struct InputRouter {
             if let press = active[button] { return RoutingDecision(suppress: press.suppress) }
             let binding = profile.actionBinding(for: button, modifiers: modifiers)
             let nativeClick = button < 3 && (binding.action == .passthrough || (binding.action == .mouseClick && binding.mouseButton == button))
+            let chordBindings = profile.chords.filter { $0.isValid && $0.buttons.contains(button) }
+            let pressed = Set(active.keys).union([button])
+            // Chord definitions belong to the held press, not just its first
+            // pending attempt. Every fresh second-button down can complete it.
+            let completed = active.keys.sorted().flatMap { active[$0]?.chordBindings ?? [] }.filter {
+                $0.buttons.contains(button) && Set($0.buttons).isSubset(of: pressed) &&
+                    ($0.modifiers.isEmpty || $0.modifiers == modifiers)
+            }.sorted {
+                if $0.buttons.count != $1.buttons.count { return $0.buttons.count > $1.buttons.count }
+                return $0.modifiers == modifiers && $1.modifiers != modifiers
+            }
+            if let chord = completed.first {
+                let members = Set(chord.buttons)
+                var emissions = flushPending(excluding: members)
+                active[button] = Press(binding: binding, suppress: true, pending: false, candidates: [], chordBindings: chordBindings)
+                for member in members {
+                    if let press = active[member], press.held {
+                        emissions.append(InputEmission(button: member, binding: press.binding, phase: .up))
+                    }
+                    active[member]?.held = false
+                    active[member]?.pending = false; active[member]?.candidates = []
+                    if active[member]?.chordBindings.contains(where: { $0.id == chord.id }) == false {
+                        active[member]?.chordBindings.append(chord)
+                    }
+                }
+                let held = chord.binding.heldShortcut != nil
+                if held { heldChords[button] = HeldChord(members: members, binding: chord.binding) }
+                emissions.append(InputEmission(button: button, binding: chord.binding, phase: held ? .down : .complete))
+                return RoutingDecision(suppress: true, emissions: emissions)
+            }
             let pendingButtons = active.keys.filter { active[$0]?.pending == true }.sorted()
             var emissions: [InputEmission] = []
             if let first = pendingButtons.first {
@@ -68,29 +99,19 @@ public struct InputRouter {
                     ($0.modifiers.isEmpty || $0.modifiers == modifiers) && pressed.isSubset(of: Set($0.buttons))
                 }
                 if !candidates.isEmpty {
-                    active[button] = Press(binding: binding, suppress: !nativeClick, pending: true, candidates: candidates)
+                    active[button] = Press(binding: binding, suppress: !nativeClick, pending: true, candidates: candidates, chordBindings: chordBindings)
                     for member in pendingButtons { active[member]?.candidates = candidates }
-                    let exact = candidates.filter { Set($0.buttons) == pressed }
-                    if let chord = exact.first(where: { $0.modifiers == modifiers }) ?? exact.first {
-                        // This second down has not reached macOS, so consume its
-                        // whole pair. Earlier native primary clicks keep their up.
-                        active[button]?.suppress = true
-                        for member in pressed { active[member]?.pending = false; active[member]?.candidates = [] }
-                        let held = chord.binding.heldShortcut != nil
-                        if held { heldChords[button] = HeldChord(members: pressed, binding: chord.binding) }
-                        return RoutingDecision(suppress: true, emissions: [InputEmission(button: button, binding: chord.binding, phase: held ? .down : .complete)])
-                    }
                     return RoutingDecision(suppress: !nativeClick)
                 }
                 emissions = flushPending()
             }
             let eligible = profile.chords.filter { $0.isValid && $0.buttons.contains(button) && ($0.modifiers.isEmpty || $0.modifiers == modifiers) }
             if !eligible.isEmpty {
-                active[button] = Press(binding: binding, suppress: !nativeClick, pending: true, candidates: eligible)
+                active[button] = Press(binding: binding, suppress: !nativeClick, pending: true, candidates: eligible, chordBindings: chordBindings)
                 return RoutingDecision(suppress: !nativeClick, emissions: emissions)
             }
             let suppress = binding.action != .passthrough
-            active[button] = Press(binding: binding, suppress: suppress, pending: false, candidates: [])
+            active[button] = Press(binding: binding, suppress: suppress, pending: false, candidates: [], chordBindings: chordBindings)
             if suppress {
                 let held = binding.heldShortcut != nil
                 active[button]?.held = held
@@ -99,8 +120,8 @@ public struct InputRouter {
             return RoutingDecision(suppress: suppress, emissions: emissions)
         }
     }
-    private mutating func flushPending() -> [InputEmission] {
-        let buttons = active.keys.filter { active[$0]?.pending == true }.sorted()
+    private mutating func flushPending(excluding: Set<Int> = []) -> [InputEmission] {
+        let buttons = active.keys.filter { active[$0]?.pending == true && !excluding.contains($0) }.sorted()
         return buttons.compactMap { button in
             guard let press = active[button] else { return nil }
             active[button]?.pending = false; active[button]?.candidates = []

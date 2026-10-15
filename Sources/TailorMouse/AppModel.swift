@@ -55,6 +55,7 @@ final class AppModel: ObservableObject {
         }
         interceptor.configuration = { [weak self] in self?.configuration ?? ProfileConfiguration() }
         interceptor.devices = { [weak self] in self?.devices.devices ?? [] }
+        interceptor.keyboardModifiers = { [weak self] in self?.indicators.modifiers ?? [] }
         interceptor.observed = { [weak self] value in self?.lastInput = value; self?.writeRuntimeStatus() }
         interceptor.observedButton = { [weak self] button, phase in
             guard let self else { return }
