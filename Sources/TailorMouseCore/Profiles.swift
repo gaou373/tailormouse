@@ -153,6 +153,23 @@ public struct MouseProfile: Codable, Equatable, Identifiable {
             ?? ActionBinding(action: .passthrough, scrollX: direction.axis == 1 ? direction.sign * 3 : 0,
                              scrollY: direction.axis == 0 ? direction.sign * 3 : 0)
     }
+    public mutating func swapWheelBindings(horizontal: Bool, modifiers: ModifierMask = []) {
+        let first: WheelDirection = horizontal ? .left : .up
+        let second: WheelDirection = horizontal ? .right : .down
+        // Snapshot the displayed assignments before writing either override.
+        // Inherited mappings become explicit only for this modifier selection.
+        let firstBinding = wheelBinding(direction: first, modifiers: modifiers)
+        let secondBinding = wheelBinding(direction: second, modifiers: modifiers)
+        func key(_ direction: WheelDirection) -> String {
+            modifiers.isEmpty ? direction.rawValue : "\(direction.rawValue):\(modifiers.rawValue)"
+        }
+        if modifiers.isEmpty {
+            wheelBindings.removeValue(forKey: "\(first.rawValue):0")
+            wheelBindings.removeValue(forKey: "\(second.rawValue):0")
+        }
+        wheelBindings[key(first)] = secondBinding
+        wheelBindings[key(second)] = firstBinding
+    }
     public func inheritedProfile(name: String, bundleIdentifier: String) -> MouseProfile {
         var profile = self; profile.id = UUID(); profile.name = name; profile.bundleIdentifier = bundleIdentifier; return profile
     }

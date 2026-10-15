@@ -540,6 +540,7 @@ private struct WheelView: View {
     @State private var modifiers = ModifierMask()
     @State private var selected: WheelEditSelection?
     private var effective: ModifierMask { modifiers.union(indicators.modifiers) }
+    private var directions: [WheelDirection] { horizontal ? [.left, .right] : [.up, .down] }
     var body: some View {
         VStack(spacing: 12) {
             VStack(spacing: 9) {
@@ -557,19 +558,22 @@ private struct WheelView: View {
                     Picker("Wheel", selection: $horizontal) {
                         Text("Vertical").tag(false); Text("Horizontal").tag(true)
                     }.pickerStyle(.segmented).labelsHidden().frame(width: 200)
-                    ForEach(horizontal ? [WheelDirection.left, .right] : [.up, .down]) { direction in
+                    VStack(spacing: 2) {
+                        wheelRow(directions[0])
                         HStack {
-                            Text(direction.title).frame(width: 76, alignment: .trailing)
-                            let binding = profile.wheelBinding(direction: direction, modifiers: effective)
-                            Button { selected = WheelEditSelection(direction: direction, modifiers: effective, binding: binding) } label: {
-                                HStack {
-                                    Image(systemName: binding.action == .passthrough ? "arrow.up.arrow.down" : actionSymbol(binding.action))
-                                    Text(binding.action == .passthrough ? "Scroll \(direction.rawValue.capitalized)" : bindingTitle(binding, button: 100)).lineLimit(1)
-                                    Spacer()
-                                }.padding(.horizontal, 8).frame(height: 24)
-                                    .background(CompactTheme.control, in: RoundedRectangle(cornerRadius: 4))
+                            Color.clear.frame(width: 76, height: 20)
+                            Button {
+                                profile.swapWheelBindings(horizontal: horizontal, modifiers: effective)
+                            } label: {
+                                Image(systemName: "arrow.left.arrow.right")
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .frame(width: 32, height: 20).contentShape(Rectangle())
                             }.buttonStyle(.plain)
+                                .frame(maxWidth: .infinity)
+                                .help("Swap \(directions[0].title) and \(directions[1].title) assignments")
+                                .accessibilityLabel("Swap \(directions[0].title) and \(directions[1].title) assignments")
                         }
+                        wheelRow(directions[1])
                     }
                 }.frame(maxWidth: .infinity)
                 VStack {
@@ -590,6 +594,20 @@ private struct WheelView: View {
                 let key = flags.isEmpty ? direction.rawValue : "\(direction.rawValue):\(flags.rawValue)"
                 if inherit { profile.wheelBindings.removeValue(forKey: key) } else { profile.wheelBindings[key] = binding }
             }
+        }
+    }
+    private func wheelRow(_ direction: WheelDirection) -> some View {
+        HStack {
+            Text(direction.title).frame(width: 76, alignment: .trailing)
+            let binding = profile.wheelBinding(direction: direction, modifiers: effective)
+            Button { selected = WheelEditSelection(direction: direction, modifiers: effective, binding: binding) } label: {
+                HStack {
+                    Image(systemName: binding.action == .passthrough ? "arrow.up.arrow.down" : actionSymbol(binding.action))
+                    Text(binding.action == .passthrough ? "Scroll \(direction.rawValue.capitalized)" : bindingTitle(binding, button: 100)).lineLimit(1)
+                    Spacer()
+                }.padding(.horizontal, 8).frame(height: 24)
+                    .background(CompactTheme.control, in: RoundedRectangle(cornerRadius: 4))
+            }.buttonStyle(.plain)
         }
     }
 }
