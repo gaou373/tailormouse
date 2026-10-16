@@ -93,7 +93,9 @@ public struct ChordBinding: Codable, Equatable, Identifiable {
         self.id = id; self.buttons = buttons; self.modifiers = modifiers; self.binding = binding; self.note = note
     }
     public var isValid: Bool {
-        buttons.count >= 2 && Set(buttons).count == buttons.count && buttons.allSatisfy { (0...31).contains($0) || (100...111).contains($0) }
+        buttons.count >= 2 && Set(buttons).count == buttons.count &&
+            buttons.filter { WheelDirection(chordInput: $0) != nil }.count <= 1 &&
+            buttons.allSatisfy { (0...31).contains($0) || (100...111).contains($0) || WheelDirection(chordInput: $0) != nil }
     }
 }
 

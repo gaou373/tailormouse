@@ -30,6 +30,33 @@ public struct InputRouter {
     private var active: [Int: Press] = [:]
     private var heldChords: [Int: HeldChord] = [:]
     public init() {}
+    /// A scroll is a transient input: it can complete a held-button chord but
+    /// never becomes a pending/held button. Each report can trigger again.
+    public mutating func routeScroll(direction: WheelDirection, modifiers: ModifierMask = []) -> RoutingDecision {
+        let input = direction.chordInput
+        let pressed = Set(active.keys).union([input])
+        let completed = active.keys.sorted().flatMap { active[$0]?.chordBindings ?? [] }.filter {
+            $0.buttons.contains(input) && Set($0.buttons).isSubset(of: pressed) &&
+                ($0.modifiers.isEmpty || $0.modifiers == modifiers)
+        }.sorted {
+            if $0.buttons.count != $1.buttons.count { return $0.buttons.count > $1.buttons.count }
+            return $0.modifiers == modifiers && $1.modifiers != modifiers
+        }
+        guard let chord = completed.first else { return RoutingDecision(suppress: false) }
+        let members = Set(chord.buttons)
+        var emissions = flushPending(excluding: members)
+        for member in members.sorted() {
+            if let press = active[member], press.held {
+                emissions.append(InputEmission(button: member, binding: press.binding, phase: .up))
+            }
+            active[member]?.held = false
+            active[member]?.pending = false; active[member]?.candidates = []
+        }
+        // Scroll has no physical release. Even a hold/repeat shortcut must be
+        // emitted as a complete tap, never as an unpaired key-down.
+        emissions.append(InputEmission(button: input, binding: chord.binding))
+        return RoutingDecision(suppress: true, emissions: emissions)
+    }
     @discardableResult public mutating func reset() -> [InputEmission] {
         let releases = active.keys.sorted().compactMap { button -> InputEmission? in
             guard let press = active[button], press.held else { return nil }

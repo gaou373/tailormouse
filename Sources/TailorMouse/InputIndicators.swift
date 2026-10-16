@@ -62,7 +62,7 @@ final class InputIndicators: ObservableObject {
         guard monitoringEnabled else { return }
         guard CGPreflightListenEventAccess() else { recordingMessage = "Enable Input Monitoring before recording a mouse button."; return }
         recordingGeneration += 1; recorder.begin(); recorded = completed; recording = true
-        recordingMessage = "Press and release a button on your selected mouse. Escape cancels."
+        recordingMessage = "Press and release a button, or scroll, on your selected mouse. Escape cancels."
         stopInspector(); startInspector()
         guard tap != nil else { cancelRecording(); recordingMessage = "Mouse recording could not start. Check Input Monitoring and reopen the app."; return }
         recordingTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: false) { [weak self] _ in
@@ -83,6 +83,9 @@ final class InputIndicators: ObservableObject {
     }
     private func record(_ button: Int, phase: ButtonPhase, source: String) {
         guard recording, let captured = recorder.route(button: button, phase: phase, source: source) else { return }
+        finishRecording(captured)
+    }
+    private func finishRecording(_ captured: Int) {
         let generation = recordingGeneration
         // Defer beyond the release so a click on Cancel can cancel instead of
         // assigning itself to the chord or activating the next editor control.
@@ -91,14 +94,14 @@ final class InputIndicators: ObservableObject {
             let completed = self.recorded
             self.cancelRecording()
             self.recordingMessage = "Recorded \(ChordButtonChoices.title(captured))."
-            self.detected(captured); completed?(captured)
+            if WheelDirection(chordInput: captured) == nil { self.detected(captured) }; completed?(captured)
         }
     }
     private func startInspector() {
         guard monitoringEnabled else { return }
         guard CGPreflightListenEventAccess() else { inspectionMessage = "Input Monitoring approval is needed to identify buttons."; return }
         inspectionMessage = "Press a button on your mouse."
-        let types: [CGEventType] = [.leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp, .otherMouseDown, .otherMouseUp, .keyDown, .keyUp]
+        let types: [CGEventType] = [.leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp, .otherMouseDown, .otherMouseUp, .keyDown, .keyUp, .scrollWheel]
         let mask = types.reduce(CGEventMask(0)) { $0 | CGEventMask(1) << $1.rawValue }
         tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .listenOnly,
             eventsOfInterest: mask, callback: { _, type, event, context in
@@ -131,7 +134,7 @@ final class InputIndicators: ObservableObject {
         if family() == nil || family() == "razer.naga.pro" { rawKeyboard.refresh() }
     }
     private func observe(_ type: CGEventType, _ event: CGEvent) {
-        guard [.leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp, .otherMouseDown, .otherMouseUp, .keyDown, .keyUp].contains(type) else { return }
+        guard [.leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp, .otherMouseDown, .otherMouseUp, .keyDown, .keyUp, .scrollWheel].contains(type) else { return }
         // SteerMouse output retains the Naga sender ID. Ignore both edges before
         // hover detection or recording; the shared raw reader still identifies
         // the original Bluetooth side button. Resolve live PIDs across restarts.
@@ -142,6 +145,20 @@ final class InputIndicators: ObservableObject {
         let sender = UInt64(bitPattern: event.getIntegerValueField(CGEventField(rawValue: 87)!))
         guard let device = DeviceEndpoint.matching(senderID: sender, in: devices()),
               family() == nil || family() == device.identity.canonicalFamily else { return }
+        if type == .scrollWheel {
+            guard recording, event.getIntegerValueField(.scrollWheelEventMomentumPhase) == 0 else { return }
+            let fields: [[CGEventField]] = [[.scrollWheelEventDeltaAxis1, .scrollWheelEventPointDeltaAxis1],
+                                          [.scrollWheelEventDeltaAxis2, .scrollWheelEventPointDeltaAxis2]]
+            for axis in 0..<2 {
+                let delta = fields[axis].map { event.getDoubleValueField($0) }.first { $0 != 0 } ?? 0
+                guard delta != 0 else { continue }
+                if let captured = recorder.scroll(direction: .direction(axis: axis, delta: delta > 0 ? 1 : -1), source: "quartz:\(sender)") {
+                    finishRecording(captured)
+                }
+                break
+            }
+            return
+        }
         let phase: ButtonPhase = [.leftMouseUp, .rightMouseUp, .otherMouseUp, .keyUp].contains(type) ? .up : .down
         let button: Int?
         if type == .keyDown || type == .keyUp {

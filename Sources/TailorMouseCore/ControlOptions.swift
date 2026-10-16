@@ -32,6 +32,13 @@ public enum WheelDirection: String, CaseIterable, Identifiable {
     public var axis: Int { self == .up || self == .down ? 0 : 1 }
     public var sign: Int { self == .up || self == .left ? 1 : -1 }
     public var title: String { "Roll " + rawValue.capitalized }
+    /// Stable persisted chord input IDs, separate from physical mouse buttons.
+    public var chordInput: Int {
+        switch self { case .up: return 200; case .down: return 201; case .left: return 202; case .right: return 203 }
+    }
+    public init?(chordInput: Int) {
+        switch chordInput { case 200: self = .up; case 201: self = .down; case 202: self = .left; case 203: self = .right; default: return nil }
+    }
     public static func direction(axis: Int, delta: Int64) -> Self { axis == 0 ? (delta > 0 ? .up : .down) : (delta > 0 ? .left : .right) }
 }
 

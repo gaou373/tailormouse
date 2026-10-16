@@ -227,6 +227,27 @@ final class MouseInterceptor {
         }
         if type == .scrollWheel {
             var wheelMapped = false
+            let axisFields: [[CGEventField]] = [
+                [.scrollWheelEventDeltaAxis1, .scrollWheelEventFixedPtDeltaAxis1, .scrollWheelEventPointDeltaAxis1],
+                [.scrollWheelEventDeltaAxis2, .scrollWheelEventFixedPtDeltaAxis2, .scrollWheelEventPointDeltaAxis2],
+                [.scrollWheelEventDeltaAxis3, .scrollWheelEventFixedPtDeltaAxis3, .scrollWheelEventPointDeltaAxis3]]
+            // Chords use physical direction before Wheel speed/reversal. Ignore
+            // momentum: an inertial tail is not a fresh wheel input.
+            if event.getIntegerValueField(.scrollWheelEventMomentumPhase) == 0 {
+                for axis in 0..<2 {
+                    let delta = axisFields[axis].map { event.getDoubleValueField($0) }.first { $0 != 0 } ?? 0
+                    guard delta != 0, let origin = event.copy() else { continue }
+                    for other in 0..<3 where other != axis {
+                        for field in axisFields[other] { origin.setDoubleValueField(field, value: 0) }
+                    }
+                    let direction = WheelDirection.direction(axis: axis, delta: delta > 0 ? 1 : -1)
+                    let decision = state.router.routeScroll(direction: direction, modifiers: modifiers)
+                    guard decision.suppress else { continue }
+                    for emission in decision.emissions { execute(emission, state: state, fallback: origin) }
+                    for field in axisFields[axis] { event.setDoubleValueField(field, value: 0) }
+                    wheelMapped = true
+                }
+            }
             if event.getIntegerValueField(.scrollWheelEventIsContinuous) == 0 {
                 let mapped = WheelActionRouter.route(deltas: [event.getIntegerValueField(.scrollWheelEventDeltaAxis1), event.getIntegerValueField(.scrollWheelEventDeltaAxis2)],
                     continuous: false, profile: profile, modifiers: modifiers)
@@ -242,11 +263,8 @@ final class MouseInterceptor {
                     let fields: [CGEventField] = axis == 0 ? [.scrollWheelEventDeltaAxis1, .scrollWheelEventFixedPtDeltaAxis1, .scrollWheelEventPointDeltaAxis1] : [.scrollWheelEventDeltaAxis2, .scrollWheelEventFixedPtDeltaAxis2, .scrollWheelEventPointDeltaAxis2]
                     for field in fields { event.setIntegerValueField(field, value: 0) }
                 }
-                let scrollFields: [CGEventField] = [.scrollWheelEventDeltaAxis1, .scrollWheelEventDeltaAxis2, .scrollWheelEventDeltaAxis3,
-                    .scrollWheelEventFixedPtDeltaAxis1, .scrollWheelEventFixedPtDeltaAxis2, .scrollWheelEventFixedPtDeltaAxis3,
-                    .scrollWheelEventPointDeltaAxis1, .scrollWheelEventPointDeltaAxis2, .scrollWheelEventPointDeltaAxis3]
-                if wheelMapped && scrollFields.allSatisfy({ event.getDoubleValueField($0) == 0 }) { return nil }
             }
+            if wheelMapped && axisFields.joined().allSatisfy({ event.getDoubleValueField($0) == 0 }) { return nil }
             transformWheel(event, state: state, profile: profile)
             return Unmanaged.passUnretained(event)
         }

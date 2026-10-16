@@ -498,6 +498,7 @@ private struct CategoryPicker: View {
 private struct ActionDetails: View {
     @Binding var binding: ActionBinding
     var wheel = false
+    var scrollChord = false
     private var category: ActionCategory { .category(for: binding.action, wheel: wheel) }
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -506,8 +507,8 @@ private struct ActionDetails: View {
                 ModifierPicker(modifiers: Binding(get: { binding.shortcut?.modifiers ?? [] }, set: { flags in
                     var shortcut = binding.shortcut ?? Shortcut(keyCode: 0); shortcut.modifiers = flags; binding.shortcut = shortcut
                 }))
-                if wheel {
-                    Text("Wheel shortcuts run once per scroll step.").font(.caption).foregroundStyle(.secondary)
+                if wheel || scrollChord {
+                    Text("Wheel shortcuts run once per scroll event.").font(.caption).foregroundStyle(.secondary)
                 } else {
                     Picker("Behavior", selection: Binding(get: { binding.shortcutBehavior ?? .tap }, set: { binding.shortcutBehavior = $0 == .tap ? nil : $0 })) {
                         ForEach(ShortcutBehavior.allCases) { Text($0.title).tag($0) }
@@ -915,8 +916,8 @@ private struct ChordActionSheet: View {
                         .background(index == 0 ? Color.white.opacity(0.16) : index.isMultiple(of: 2) ? Color.white.opacity(0.025) : Color.clear)
                 }
             }.overlay(Rectangle().stroke(CompactTheme.border))
-            ActionDetails(binding: $draft.binding).disabled(indicators.recording)
-            DisclosureGroup("Chord buttons & note", isExpanded: $buttonsExpanded) {
+            ActionDetails(binding: $draft.binding, scrollChord: draft.buttons.contains { WheelDirection(chordInput: $0) != nil }).disabled(indicators.recording)
+            DisclosureGroup("Chord inputs & note", isExpanded: $buttonsExpanded) {
                 ScrollView {
                     ChordTriggerControls(chord: $draft, indicators: indicators, prepareRecording: prepareRecording)
                         .padding(.top, 8)
@@ -966,6 +967,11 @@ private struct ChordTriggerControls: View {
                                 Button(ChordButtonChoices.title(button)) { chord.buttons[index] = button }
                             }
                         }
+                        Menu("Scroll") {
+                            ForEach(ChordButtonChoices.scrollDirections, id: \.self) { input in
+                                Button(ChordButtonChoices.title(input)) { chord.buttons[index] = input }
+                            }
+                        }
                         if !extras.isEmpty {
                             Menu("Other detected or saved buttons") {
                                 ForEach(extras, id: \.self) { button in
@@ -974,16 +980,19 @@ private struct ChordTriggerControls: View {
                             }
                         }
                     } label: { Text(ChordButtonChoices.title(chord.buttons[index])).frame(maxWidth: .infinity) }
-                        .menuStyle(.button).accessibilityLabel("\(title) mouse button")
+                        .menuStyle(.button).accessibilityLabel("\(title) chord input")
                     Button("Record") {
-                        prepareRecording(); recordingTitle = "Recording \(title.lowercased()) button"
+                        prepareRecording(); recordingTitle = "Recording \(title.lowercased()) input"
                         indicators.recordButton { button in
                             guard chord.buttons.indices.contains(index) else { return }; chord.buttons[index] = button
                         }
-                    }.controlSize(.small).accessibilityLabel("Record \(title.lowercased()) mouse button")
+                    }.controlSize(.small).accessibilityLabel("Record \(title.lowercased()) chord input")
                 }.disabled(indicators.recording)
             }
-            if !chord.isValid { Text("Choose different mouse buttons.").font(.caption).foregroundStyle(.orange) }
+            if !chord.isValid { Text("Choose different inputs, with a mouse button and at most one scroll direction.").font(.caption).foregroundStyle(.orange) }
+            if chord.buttons.contains(where: { WheelDirection(chordInput: $0) != nil }) {
+                Text("Hold the button, then scroll. Each scroll event runs the action once.").font(.caption).foregroundStyle(.secondary)
+            }
             ModifierPicker(modifiers: $chord.modifiers).disabled(indicators.recording)
             TextField("Note", text: Binding(get: { chord.note ?? "" }, set: { chord.note = $0.isEmpty ? nil : String($0.prefix(160)) }))
                 .textFieldStyle(.roundedBorder).disabled(indicators.recording)
@@ -1068,10 +1077,10 @@ private func shortcutTitle(_ shortcut: Shortcut) -> String {
 func profileManagementPreview(model: AppModel, action: ProfileManagementAction) -> some View {
     ProfileManagementSheet(model: model, source: model.configuration.defaultProfile, action: action)
 }
-func chordEditorPreview(expanded: Bool = false) -> some View {
+func chordEditorPreview(expanded: Bool = false, scroll: Bool = false) -> some View {
     let indicators = InputIndicators()
     indicators.monitoringEnabled = false
-    return ChordActionSheet(initial: ChordBinding(buttons: [0,3], binding: ActionBinding(action: .shortcut, shortcut: Shortcut(keyCode: 51))),
+    return ChordActionSheet(initial: ChordBinding(buttons: scroll ? [100, WheelDirection.up.chordInput] : [0,3], binding: ActionBinding(action: .shortcut, shortcut: Shortcut(keyCode: 51))),
         isNew: expanded, indicators: indicators, prepareRecording: {}, save: { _ in })
 }
 func buttonEditorPreview(functionKey: Int? = nil) -> some View {

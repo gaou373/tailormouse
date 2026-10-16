@@ -40,7 +40,8 @@ struct TailorMouseUIRender {
             ChordBinding(buttons: [1,3], binding: ActionBinding(action: .shortcut, shortcut: Shortcut(keyCode:36)), note: "Work"),
             ChordBinding(buttons: [0,4], binding: ActionBinding(action: .disabled)),
             ChordBinding(buttons: [1,4], binding: ActionBinding(action: .disabled)),
-            ChordBinding(buttons: [100,101], binding: ActionBinding(action: .copy)),
+            ChordBinding(buttons: [100, WheelDirection.up.chordInput], binding: ActionBinding(action: .copy)),
+            ChordBinding(buttons: [100, WheelDirection.right.chordInput], binding: ActionBinding(action: .paste)),
             ChordBinding(buttons: [100,102], binding: ActionBinding(action: .disabled)),
             ChordBinding(buttons: [100,103], binding: ActionBinding(action: .disabled)),
             ChordBinding(buttons: [100,104], binding: ActionBinding(action: .disabled)),
@@ -48,6 +49,7 @@ struct TailorMouseUIRender {
         ]
         try render(ContentView(model: model, tabName: "Chords"), size: NSSize(width:680,height:510), to: output.appendingPathComponent("chords.png"))
         try render(chordEditorPreview(), size: NSSize(width:540,height:420), to: output.appendingPathComponent("chord-editor.png"))
+        try render(chordEditorPreview(expanded: true, scroll: true), size: NSSize(width:540,height:598), to: output.appendingPathComponent("chord-editor-scroll.png"))
         try render(chordEditorPreview(expanded: true), size: NSSize(width:540,height:598), to: output.appendingPathComponent("chord-editor-buttons.png"))
     }
     private static func render<V: View>(_ view: V, size: NSSize, to url: URL) throws {
