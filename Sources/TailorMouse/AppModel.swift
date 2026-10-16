@@ -17,6 +17,7 @@ final class AppModel: ObservableObject {
     let indicators = InputIndicators()
     private let interceptor = MouseInterceptor()
     private let settingsURL: URL
+    private let preview: Bool
     private var saveSubscription: AnyCancellable?
     private var terminationObserver: NSObjectProtocol?
     private var hasEdits = false
@@ -27,6 +28,7 @@ final class AppModel: ObservableObject {
     private var mouseButtonUpEvents: [String: Int] = [:]
 
     init(preview: Bool = false) {
+        self.preview = preview
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("TailorMouse", isDirectory: true)
         settingsURL = directory.appendingPathComponent("profiles.json")
@@ -38,7 +40,7 @@ final class AppModel: ObservableObject {
         indicators.family = { [weak self] in self?.configuration.selectedDeviceFamily }
         indicators.beginModifiers()
         pointer.configuration = { [weak self] in self?.configuration ?? ProfileConfiguration() }
-        pointer.profile = { [weak self] in self?.configuration.profile(for: NSWorkspace.shared.frontmostApplication?.bundleIdentifier) ?? MouseProfile() }
+        pointer.profile = { [weak self] in self?.configuration.trackingProfile ?? MouseProfile() }
         pointer.captureWiredReference = { [weak self] values in
             guard let self, values.isValidReference, self.configuration.nagaWiredTrackingReference == nil else { return }
             self.hasEdits = true
@@ -50,7 +52,7 @@ final class AppModel: ObservableObject {
                 let data = try Data(contentsOf: settingsURL)
                 let loaded = try Self.decodeConfiguration(data)
                 let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-                originalNeedsBackup = (json?["schemaVersion"] as? Int) != 2
+                originalNeedsBackup = (json?["schemaVersion"] as? Int) != 3
                 configuration = loaded
                 selectedID = loaded.defaultProfile.id
             } catch {
@@ -110,6 +112,45 @@ final class AppModel: ObservableObject {
         if value.id == configuration.defaultProfile.id { configuration.defaultProfile = value }
         else if let index = configuration.appProfiles.firstIndex(where: { $0.id == value.id }) { configuration.appProfiles[index] = value }
         pointer.edited()
+    }
+
+    func updateCursorTracking(_ settings: CursorTrackingSettings) {
+        guard settings.isValid else { return }
+        hasEdits = true; configuration.cursorTracking = settings; pointer.edited()
+    }
+
+    func chooseApplicationTarget() -> ApplicationProfileTarget? {
+        let panel = NSOpenPanel()
+        panel.title = "Choose a destination application"
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.allowedContentTypes = [.applicationBundle]; panel.canChooseDirectories = false; panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url, let bundle = Bundle(url: url), let identifier = bundle.bundleIdentifier else { return nil }
+        let name = (bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String) ?? url.deletingPathExtension().lastPathComponent
+        return ApplicationProfileTarget(name: name, bundleIdentifier: identifier)
+    }
+
+    func manageProfile(_ action: ProfileManagementAction, sourceID: UUID, target: ApplicationProfileTarget?) throws {
+        var next = configuration
+        let selected = try next.manageProfile(action, sourceID: sourceID, target: target)
+        if preview { configuration = next; selectedID = selected; return }
+        // Back up the complete in-memory configuration before applying a
+        // reset/replacement, including edits still waiting for autosave.
+        let directory = settingsURL.deletingLastPathComponent().appendingPathComponent("Profile Backups", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let backup = directory.appendingPathComponent("profiles-\(UUID().uuidString).json")
+        let data = try encoded(configuration)
+        guard FileManager.default.createFile(atPath: backup.path, contents: data, attributes: [.posixPermissions: 0o600]),
+              try Data(contentsOf: backup) == data else {
+            throw NSError(domain: "TailorMouse", code: 3, userInfo: [NSLocalizedDescriptionKey: "The existing profiles could not be backed up."])
+        }
+        let previous = configuration; let previousSelected = selectedID; let previousHasEdits = hasEdits
+        hasEdits = true; configuration = next; selectedID = selected
+        guard save(next) else {
+            configuration = previous; selectedID = previousSelected; hasEdits = previousHasEdits
+            throw NSError(domain: "TailorMouse", code: 4, userInfo: [NSLocalizedDescriptionKey: "The profile change could not be saved. Your previous settings are retained."])
+        }
+        status = action == .reset ? "Profile reset. Shared cursor settings are unchanged." : "Profile \(action == .copy ? "copied" : "transferred") to \(target?.name ?? "application")."
+        writeRuntimeStatus()
     }
 
     func setDeviceFamily(_ family: String?) {
@@ -236,7 +277,7 @@ final class AppModel: ObservableObject {
 
     private static func decodeConfiguration(_ data: Data) throws -> ProfileConfiguration {
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let version = json["schemaVersion"] as? Int, (1...2).contains(version) else {
+              let version = json["schemaVersion"] as? Int, (1...3).contains(version) else {
             throw NSError(domain: "TailorMouse", code: 1, userInfo: [NSLocalizedDescriptionKey: "This file is not a supported TailorMouse profile file."])
         }
         guard json["defaultProfile"] is [String: Any], json["appProfiles"] is [Any] else {

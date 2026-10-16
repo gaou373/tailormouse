@@ -195,22 +195,24 @@ public struct MouseProfile: Codable, Equatable, Identifiable {
 }
 
 public struct ProfileConfiguration: Codable, Equatable {
-    public var schemaVersion = 2
+    public var schemaVersion = 3
     public var defaultProfile: MouseProfile
     public var appProfiles: [MouseProfile]
     public var selectedDeviceFamily: String?
     public var nagaKeyboardLayouts: [String: NagaKeyboardLayout]
     public var nagaWiredTrackingReference: NativePointerValues?
-    public init(defaultProfile: MouseProfile = MouseProfile(), appProfiles: [MouseProfile] = [], selectedDeviceFamily: String? = "razer.naga.pro", nagaKeyboardLayouts: [String: NagaKeyboardLayout] = [:], nagaWiredTrackingReference: NativePointerValues? = nil) {
+    public var cursorTracking: CursorTrackingSettings
+    public init(defaultProfile: MouseProfile = MouseProfile(), appProfiles: [MouseProfile] = [], selectedDeviceFamily: String? = "razer.naga.pro", nagaKeyboardLayouts: [String: NagaKeyboardLayout] = [:], nagaWiredTrackingReference: NativePointerValues? = nil, cursorTracking: CursorTrackingSettings? = nil) {
         self.defaultProfile = defaultProfile; self.appProfiles = appProfiles; self.selectedDeviceFamily = selectedDeviceFamily
         self.nagaKeyboardLayouts = nagaKeyboardLayouts
         self.nagaWiredTrackingReference = nagaWiredTrackingReference
+        self.cursorTracking = cursorTracking ?? CursorTrackingSettings(acceleration: defaultProfile.pointerAcceleration, sensitivity: defaultProfile.pointerSensitivity)
     }
-    private enum CodingKeys: String, CodingKey { case schemaVersion, defaultProfile, appProfiles, selectedDeviceFamily, nagaKeyboardLayouts, nagaWiredTrackingReference }
+    private enum CodingKeys: String, CodingKey { case schemaVersion, defaultProfile, appProfiles, selectedDeviceFamily, nagaKeyboardLayouts, nagaWiredTrackingReference, cursorTracking }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let version = try c.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
-        guard (1...2).contains(version) else { throw DecodingError.dataCorruptedError(forKey: .schemaVersion, in: c, debugDescription: "Unsupported profile version \(version)") }
+        guard (1...3).contains(version) else { throw DecodingError.dataCorruptedError(forKey: .schemaVersion, in: c, debugDescription: "Unsupported profile version \(version)") }
         defaultProfile = try c.decodeIfPresent(MouseProfile.self, forKey: .defaultProfile) ?? MouseProfile()
         appProfiles = try c.decodeIfPresent([MouseProfile].self, forKey: .appProfiles) ?? []
         selectedDeviceFamily = c.contains(.selectedDeviceFamily) ? try c.decodeIfPresent(String.self, forKey: .selectedDeviceFamily) : "razer.naga.pro"
@@ -222,13 +224,22 @@ public struct ProfileConfiguration: Codable, Equatable {
         guard nagaKeyboardLayouts.values.allSatisfy(\.isValid) else {
             throw DecodingError.dataCorruptedError(forKey: .nagaKeyboardLayouts, in: c, debugDescription: "Invalid Naga keyboard calibration")
         }
-        schemaVersion = 2
+        if version == 3 {
+            cursorTracking = try c.decode(CursorTrackingSettings.self, forKey: .cursorTracking)
+        } else {
+            cursorTracking = CursorTrackingSettings(acceleration: defaultProfile.pointerAcceleration, sensitivity: defaultProfile.pointerSensitivity)
+        }
+        guard cursorTracking.isValid else {
+            throw DecodingError.dataCorruptedError(forKey: .cursorTracking, in: c, debugDescription: "Invalid shared cursor tracking")
+        }
+        schemaVersion = 3
     }
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(2, forKey: .schemaVersion)
+        try c.encode(3, forKey: .schemaVersion)
         try c.encode(defaultProfile, forKey: .defaultProfile)
         try c.encode(appProfiles, forKey: .appProfiles)
+        try c.encode(cursorTracking, forKey: .cursorTracking)
         try c.encode(nagaKeyboardLayouts, forKey: .nagaKeyboardLayouts)
         try c.encodeIfPresent(nagaWiredTrackingReference, forKey: .nagaWiredTrackingReference)
         if let selectedDeviceFamily { try c.encode(selectedDeviceFamily, forKey: .selectedDeviceFamily) }

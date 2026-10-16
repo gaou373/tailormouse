@@ -31,6 +31,10 @@ struct TailorMouseUIRender {
         try render(ContentView(model: model), size: NSSize(width: 680, height: 510), to: output.appendingPathComponent("buttons-modifiers.png"))
         try render(ContentView(model: model, tabName: "Wheel"), size: NSSize(width: 680, height: 510), to: output.appendingPathComponent("wheel.png"))
         try render(ContentView(model: model, tabName: "Cursor"), size: NSSize(width: 680, height: 510), to: output.appendingPathComponent("cursor.png"))
+        model.configuration.appProfiles = [MouseProfile(name: "Timeline Editor", bundleIdentifier: "example.timeline")]
+        try render(profileManagementPreview(model: model, action: .copy), size: NSSize(width: 480, height: 370), to: output.appendingPathComponent("profile-copy.png"))
+        try render(profileManagementPreview(model: model, action: .transfer), size: NSSize(width: 480, height: 390), to: output.appendingPathComponent("profile-transfer.png"))
+        try render(profileManagementPreview(model: model, action: .reset), size: NSSize(width: 480, height: 270), to: output.appendingPathComponent("profile-reset.png"))
         model.configuration.defaultProfile.chords = [
             ChordBinding(buttons: [0,3], binding: ActionBinding(action: .shortcut, shortcut: Shortcut(keyCode:51))),
             ChordBinding(buttons: [1,3], binding: ActionBinding(action: .shortcut, shortcut: Shortcut(keyCode:36)), note: "Work"),

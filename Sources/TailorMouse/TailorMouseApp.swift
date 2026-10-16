@@ -72,6 +72,7 @@ struct ContentView: View {
     @ObservedObject var model: AppModel
     @ObservedObject private var catalog: DeviceCatalog
     @State private var tab = EditorTab.buttons
+    @State private var profileRequest: ProfileManagementRequest?
     init(model: AppModel, tabName: String = "Buttons") {
         self.model = model; self.catalog = model.devices
         _tab = State(initialValue: EditorTab(rawValue: tabName) ?? .buttons)
@@ -102,6 +103,10 @@ struct ContentView: View {
                 }.menuStyle(.button).buttonStyle(.plain).frame(width: 245).accessibilityLabel("Profile")
                 Menu("Edit") {
                     Button("Add application…", action: model.addApplication)
+                    Button("Copy current profile…") { profileRequest = ProfileManagementRequest(action: .copy, source: model.selectedProfile) }
+                    Button("Transfer current profile…") { profileRequest = ProfileManagementRequest(action: .transfer, source: model.selectedProfile) }
+                    Button("Reset current profile…") { profileRequest = ProfileManagementRequest(action: .reset, source: model.selectedProfile) }
+                    Divider()
                     Button("Remove this profile", action: model.removeSelected)
                         .disabled(model.selectedID == model.configuration.defaultProfile.id)
                     Divider()
@@ -145,7 +150,7 @@ struct ContentView: View {
                                     switch tab {
                                     case .wheel: WheelView(profile: profile, indicators: model.indicators)
                                     case .chords: EmptyView()
-                                    case .cursor: CursorView(profile: profile, pointer: model.pointer, sensitivity: model.sensitivity)
+                                    case .cursor: CursorView(settings: Binding(get: { model.configuration.cursorTracking }, set: { model.updateCursorTracking($0) }), pointer: model.pointer, sensitivity: model.sensitivity)
                                     case .device: DevicesView(model: model, catalog: catalog)
                                     case .support: SupportView(model: model)
                                     case .buttons: EmptyView()
@@ -165,6 +170,83 @@ struct ContentView: View {
         }.padding(.horizontal, 19).padding(.top, 20).padding(.bottom, 10)
             .font(.system(size: 13)).tint(CompactTheme.accent)
             .background(CompactTheme.background).preferredColorScheme(.dark)
+            .sheet(item: $profileRequest) { request in
+                ProfileManagementSheet(model: model, source: request.source, action: request.action)
+            }
+    }
+}
+
+private struct ProfileManagementRequest: Identifiable {
+    let id = UUID()
+    let action: ProfileManagementAction
+    let source: MouseProfile
+}
+
+private struct ProfileManagementSheet: View {
+    @ObservedObject var model: AppModel
+    let source: MouseProfile
+    let action: ProfileManagementAction
+    @Environment(\.dismiss) private var dismiss
+    @State private var destinationID: String
+    @State private var chosenApplication: ApplicationProfileTarget?
+    @State private var error: String?
+    init(model: AppModel, source: MouseProfile, action: ProfileManagementAction) {
+        self.model = model; self.source = source; self.action = action
+        _destinationID = State(initialValue: model.configuration.appProfiles.first(where: { $0.id != source.id })?.bundleIdentifier ?? "")
+    }
+    private var targets: [ApplicationProfileTarget] {
+        var result = model.configuration.appProfiles.filter { $0.id != source.id }.compactMap { profile in
+            profile.bundleIdentifier.map { ApplicationProfileTarget(name: profile.name, bundleIdentifier: $0) }
+        }
+        if let chosenApplication, !result.contains(where: { $0.id == chosenApplication.id }) { result.append(chosenApplication) }
+        return result
+    }
+    private var destination: ApplicationProfileTarget? { targets.first { $0.id == destinationID } }
+    private var buttonTitle: String {
+        switch action { case .copy: return "Copy"; case .transfer: return "Transfer"; case .reset: return "Reset Profile" }
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text(action.title).font(.title2.bold())
+            Text("From: \(source.name)").font(.headline)
+            if action != .reset {
+                Picker("To application:", selection: $destinationID) {
+                    Text("Choose an application…").tag("")
+                    ForEach(targets) { target in Text(target.name).tag(target.bundleIdentifier) }
+                }.accessibilityLabel("Destination application")
+                Button("Choose another application…") {
+                    guard let target = model.chooseApplicationTarget() else { return }
+                    guard target.bundleIdentifier != source.bundleIdentifier else { error = ProfileManagementError.sameProfile.localizedDescription; return }
+                    chosenApplication = target; destinationID = target.id; error = nil
+                }
+                if let destination {
+                    let exists = model.configuration.appProfiles.contains { $0.bundleIdentifier == destination.bundleIdentifier }
+                    Text(exists ? "Replaces the buttons, wheel settings and chords in \(destination.name)." : "Creates an application profile for \(destination.name).")
+                        .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+                if action == .transfer {
+                    Text("\(source.name) will reset to its default mappings and wheel settings.")
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("\(source.name) stays unchanged.").foregroundStyle(.secondary)
+                }
+            } else {
+                Text("Reset buttons, wheel settings and chords in \(source.name) to their defaults?")
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text("Shared Cursor settings and device calibration stay unchanged.")
+                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if let error { Text(error).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button(buttonTitle) {
+                    do { try model.manageProfile(action, sourceID: source.id, target: destination); dismiss() }
+                    catch { self.error = error.localizedDescription }
+                }.buttonStyle(.borderedProminent).tint(action == .reset ? .red : CompactTheme.accent)
+                    .disabled(action != .reset && destination == nil).keyboardShortcut(.defaultAction)
+            }
+        }.padding(24).frame(width: 480).background(CompactTheme.background).preferredColorScheme(.dark)
     }
 }
 
@@ -639,17 +721,18 @@ private struct SpeedSlider: View {
 }
 
 private struct CursorView: View {
-    @Binding var profile: MouseProfile
+    @Binding var settings: CursorTrackingSettings
     @ObservedObject var pointer: NativePointer
     @ObservedObject var sensitivity: NagaSensitivity
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Speed").font(.headline)
+            Text("Speed · All Applications").font(.headline)
             VStack(spacing: 14) {
-                TrackingControl(title: "Acceleration", value: Binding(get: { profile.pointerAcceleration ?? min(5, pointer.systemAcceleration) }, set: { profile.pointerAcceleration = $0 }), range: 0...5)
-                TrackingControl(title: "Sensitivity", value: Binding(get: { profile.pointerSensitivity ?? 1 }, set: { profile.pointerSensitivity = $0 }), range: 0.25...4)
+                TrackingControl(title: "Acceleration", value: Binding(get: { settings.acceleration ?? min(5, pointer.systemAcceleration) }, set: { settings.acceleration = $0 }), range: 0...5)
+                TrackingControl(title: "Sensitivity", value: Binding(get: { settings.sensitivity ?? 1 }, set: { settings.sensitivity = $0 }), range: 0.25...4)
             }.disabled(!pointer.supported)
-            Button("Reset Tracking Adjustments") { profile.pointerAcceleration = nil; profile.pointerSensitivity = nil }
+            Button("Reset Tracking Adjustments") { settings = CursorTrackingSettings() }
+            Text("Acceleration and sensitivity are shared by every application profile.").font(.callout).foregroundStyle(.secondary)
             Text(pointer.message).font(.callout).foregroundStyle(.secondary)
             Divider()
             Text("Hardware DPI · Wired Naga Pro").font(.headline)
@@ -982,6 +1065,9 @@ private func shortcutTitle(_ shortcut: Shortcut) -> String {
 }
 
 #if TAILORMOUSE_UI_PREVIEW
+func profileManagementPreview(model: AppModel, action: ProfileManagementAction) -> some View {
+    ProfileManagementSheet(model: model, source: model.configuration.defaultProfile, action: action)
+}
 func chordEditorPreview(expanded: Bool = false) -> some View {
     let indicators = InputIndicators()
     indicators.monitoringEnabled = false

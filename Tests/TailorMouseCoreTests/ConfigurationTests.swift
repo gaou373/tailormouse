@@ -5,7 +5,7 @@ final class ConfigurationTests: XCTestCase {
     func testV1MigrationPreservesMappingsAndOldWheelBehavior() throws {
         let old = #"{"schemaVersion":1,"defaultProfile":{"id":"12345678-1234-1234-1234-123456789ABC","name":"Default","invertWheel":true,"wheelSpeed":2,"button3":"back","button4":"copy"},"appProfiles":[]}"#.data(using: .utf8)!
         let config = try JSONDecoder().decode(ProfileConfiguration.self, from: old)
-        XCTAssertEqual(config.schemaVersion, 2)
+        XCTAssertEqual(config.schemaVersion, 3)
         XCTAssertEqual(config.defaultProfile.actionBinding(for: 3).action, .back)
         XCTAssertEqual(config.defaultProfile.actionBinding(for: 4).action, .copy)
         XCTAssertEqual(config.defaultProfile.horizontalWheelSpeed, 2)
