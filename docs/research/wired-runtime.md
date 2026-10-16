@@ -99,3 +99,11 @@ This is original TailorMouse work and native runtime evidence; the existing Stee
 
 
 The user confirmed normal pointer movement with TailorMouse closed. Installed 0.2.5 build 7 passed strict signature verification; executable SHA-256 `1c22452105338a4562ea58c1694c8c8c05f794a93f60af8a04a9e5c48cd88fb3`. The app reopened with handling stopped and preserved profiles. Physical movement while Running and UI DPI acceptance remain pending.
+
+## 0.3.11 receiver raw input path
+
+Observed on 2026-10-16: the user reported side buttons and chords no longer responding after 0.3.10. TailorMouse was initially Running with ordinary receiver clicks counted and no side-button counts. A read-only shared receiver probe opened both keyboard interfaces; the primary report-0 interface delivered ten standard eight-byte snapshots. The scoped Quartz listener recorded no Naga-attributed keys. Runtime status was Stopped by the end of the capture. This does not establish the cause of the missing native events or prove another manager intercepted them. Existing Naga-only Karabiner exclusions and saved TailorMouse mappings were preserved.
+
+The independent 0.3.11 reader admits the exact original-Naga USB identities and keyboard report 0, normalizes the observed boot-keyboard format, and reuses the existing Bluetooth held-key decoder and action router. A local replay yielded five matched down/up pairs for the captured side keys 1, 2, 3, 6 and 9. Unit coverage includes raw side anchors with repeated primary-click chords, releases across profile edits, malformed report recovery and connection-specific Quartz deduplication. All 151 tests pass; a read-only check of the actual adapter found one receiver endpoint and verified detach. Physical installed-app acceptance is pending.
+
+Ignored native evidence: `.local/evidence/side-input-0310-20261016/`. The previously pinned SteerMouse target hashes and REA Evidence IDs remain unchanged; this is original-app/runtime work and claims no new target artifact findings.

@@ -187,6 +187,7 @@ final class AppModel: ObservableObject {
             "isRunning": isRunning, "status": status, "lastInput": lastInput,
             "connectionCount": devices.connections.count,
             "bluetoothRawEndpointCount": interceptor.bluetoothEndpointCount,
+            "rawKeyboardEndpointCount": interceptor.rawKeyboardEndpointCount,
             "sideButtonDownEvents": sideButtonDownEvents, "sideButtonUpEvents": sideButtonUpEvents,
             "mouseButtonDownEvents": mouseButtonDownEvents, "mouseButtonUpEvents": mouseButtonUpEvents,
             "lastSideButtonPress": lastSideButtonPress, "lastSideButtonRelease": lastSideButtonRelease,

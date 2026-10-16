@@ -17,7 +17,7 @@ final class InputIndicators: ObservableObject {
     private var monitors: [Any] = []
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
-    private let bluetooth = BluetoothNagaInput()
+    private let rawKeyboard = NagaKeyboardHIDInput()
     private var reports: [UInt64: NagaBluetoothReportDecoder] = [:]
     private var hovering = false
     private var recorder = MouseButtonRecording()
@@ -111,7 +111,7 @@ final class InputIndicators: ObservableObject {
             self.source = source; CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
             CGEvent.tapEnable(tap: tap, enable: true)
         }
-        bluetooth.report = { [weak self] id, reportID, bytes in
+        rawKeyboard.report = { [weak self] id, reportID, bytes in
             guard let self, self.family() == nil || self.family() == "razer.naga.pro" else { return }
             var decoder = self.reports[id] ?? NagaBluetoothReportDecoder()
             for edge in decoder.route(reportID: reportID, bytes: bytes) {
@@ -122,8 +122,13 @@ final class InputIndicators: ObservableObject {
             }
             self.reports[id] = decoder
         }
-        bluetooth.failed = { [weak self] value in self?.inspectionMessage = value }
-        if family() == nil || family() == "razer.naga.pro" { bluetooth.refresh() }
+        rawKeyboard.baseline = { [weak self] id, bytes in
+            var decoder = NagaBluetoothReportDecoder(); decoder.prime(reportID: 6, bytes: bytes)
+            self?.reports[id] = decoder
+        }
+        rawKeyboard.removed = { [weak self] id in self?.reports.removeValue(forKey: id) }
+        rawKeyboard.failed = { [weak self] value in self?.inspectionMessage = value }
+        if family() == nil || family() == "razer.naga.pro" { rawKeyboard.refresh() }
     }
     private func observe(_ type: CGEventType, _ event: CGEvent) {
         guard [.leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp, .otherMouseDown, .otherMouseUp, .keyDown, .keyUp].contains(type) else { return }
@@ -140,7 +145,7 @@ final class InputIndicators: ObservableObject {
         let phase: ButtonPhase = [.leftMouseUp, .rightMouseUp, .otherMouseUp, .keyUp].contains(type) ? .up : .down
         let button: Int?
         if type == .keyDown || type == .keyUp {
-            guard device.identity.canonicalFamily == "razer.naga.pro" else { return }
+            guard device.identity.canonicalFamily == "razer.naga.pro", !rawKeyboard.owns(device) else { return }
             button = NagaKeyMap.button(for: UInt16(clamping: event.getIntegerValueField(.keyboardEventKeycode)))
         } else if type == .leftMouseDown || type == .leftMouseUp { button = 0 }
         else if type == .rightMouseDown || type == .rightMouseUp { button = 1 }
@@ -151,7 +156,7 @@ final class InputIndicators: ObservableObject {
         }
     }
     private func stopInspector() {
-        bluetooth.stop(); reports.removeAll()
+        rawKeyboard.stop(); reports.removeAll()
         if let tap { CGEvent.tapEnable(tap: tap, enable: false); CFMachPortInvalidate(tap) }
         if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
         tap = nil; source = nil
