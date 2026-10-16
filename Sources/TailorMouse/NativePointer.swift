@@ -54,13 +54,14 @@ final class NativePointer: ObservableObject {
         }
     }
     static func id(_ s: IOHIDServiceClient) -> UInt64 { (IOHIDServiceClientGetRegistryID(s) as? NSNumber)?.uint64Value ?? 0 }
+    static func integerProperty(_ service: IOHIDServiceClient, _ key: String) -> Int64? {
+        if let n = IOHIDServiceClientCopyProperty(service, key as CFString) as? NSNumber { return n.int64Value }
+        let entry = IOServiceGetMatchingService(kIOMainPortDefault, IORegistryEntryIDMatching(id(service)))
+        guard entry != 0 else { return nil }; defer { IOObjectRelease(entry) }
+        return (IORegistryEntryCreateCFProperty(entry, key as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? NSNumber)?.int64Value
+    }
     static func read(_ s: IOHIDServiceClient) throws -> NativePointerValues {
-        func property(_ key: String) -> Int64? {
-            if let n = IOHIDServiceClientCopyProperty(s, key as CFString) as? NSNumber { return n.int64Value }
-            let entry = IOServiceGetMatchingService(kIOMainPortDefault, IORegistryEntryIDMatching(id(s)))
-            guard entry != 0 else { return nil }; defer { IOObjectRelease(entry) }
-            return (IORegistryEntryCreateCFProperty(entry, key as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? NSNumber)?.int64Value
-        }
+        func property(_ key: String) -> Int64? { integerProperty(s, key) }
         guard let resolution = property("HIDPointerResolution"), resolution > 0,
               let acceleration = property("HIDMouseAcceleration") else { throw NativePointerError.invalid }
         let multiplier = property("HIDPointerAccelerationMultiplier") ?? 65536
@@ -134,7 +135,7 @@ final class NativePointer: ObservableObject {
                 let id = Self.id(service)
                 guard let original = saved[id] else { continue }
                 let shared = identity(service).canonicalFamily == "razer.naga.pro" ? reference : nil
-                let interval = (IOHIDServiceClientCopyProperty(service, "ReportInterval" as CFString) as? NSNumber)?.intValue
+                let interval = Self.integerProperty(service, "ReportInterval").flatMap { Int(exactly: $0) }
                 let target = try original.values.target(profile: selectedProfile, reference: shared, device: identity(service), reportInterval: interval)
                 if let shared { systemAcceleration = max(0, Double(shared.acceleration) / 65536) }
                 // Receiver services may survive a physical transport switch.
