@@ -53,40 +53,60 @@ public enum WheelActionRouter {
 public struct NativePointerValues: Codable, Equatable {
     public let resolution: Int64
     public let acceleration: Int64
-    public init(resolution: Int64, acceleration: Int64) { self.resolution = resolution; self.acceleration = acceleration }
-    public var isValidReference: Bool {
-        resolution > 0 && resolution <= Int64(Int32.max) && (-65536...Int64(Int32.max)).contains(acceleration)
+    public let accelerationMultiplier: Int64
+    public init(resolution: Int64, acceleration: Int64, accelerationMultiplier: Int64 = 65536) {
+        self.resolution = resolution; self.acceleration = acceleration; self.accelerationMultiplier = accelerationMultiplier
     }
-    public func target(profile: MouseProfile, reference: Self? = nil) throws -> Self {
+    private enum CodingKeys: String, CodingKey { case resolution, acceleration, accelerationMultiplier }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(resolution: try c.decode(Int64.self, forKey: .resolution),
+                  acceleration: try c.decode(Int64.self, forKey: .acceleration),
+                  accelerationMultiplier: try c.decodeIfPresent(Int64.self, forKey: .accelerationMultiplier) ?? 65536)
+    }
+    public var isValidReference: Bool {
+        resolution > 0 && resolution <= Int64(Int32.max) && (-65536...Int64(Int32.max)).contains(acceleration) &&
+            (1...Int64(Int32.max)).contains(accelerationMultiplier)
+    }
+    public func target(profile: MouseProfile, reference: Self? = nil, device: DeviceIdentity? = nil, reportInterval: Int? = nil) throws -> Self {
         let baseline = reference ?? self
         let gain = profile.pointerSensitivity ?? 1
         guard gain.isFinite, (0.25...4).contains(gain), baseline.isValidReference,
               profile.pointerAcceleration.map({ $0.isFinite && (0...5).contains($0) }) ?? true else { throw NativePointerError.invalid }
         let scaled = Double(baseline.resolution) / gain
         guard scaled >= 1, scaled <= Double(Int32.max) else { throw NativePointerError.invalid }
-        return Self(resolution: Int64(scaled.rounded()), acceleration: profile.pointerAcceleration.map { Int64(($0 * 65536).rounded()) } ?? baseline.acceleration)
+        // The observed original Bluetooth Naga reports every 8 ms rather than
+        // the wired 1 ms. Normalize acceleration velocity, not output deltas.
+        // Scope this verified correction to the exact device and interval.
+        let normalizeBluetooth = reference != nil && device?.vendorID == 0x1532 && device?.productID == 0x0092 &&
+            device?.transport.lowercased().contains("bluetooth") == true && reportInterval == 8000
+        let multiplier = normalizeBluetooth ? max(1, Int64((Double(baseline.accelerationMultiplier) / 8).rounded())) : baseline.accelerationMultiplier
+        return Self(resolution: Int64(scaled.rounded()), acceleration: profile.pointerAcceleration.map { Int64(($0 * 65536).rounded()) } ?? baseline.acceleration,
+                    accelerationMultiplier: multiplier)
     }
 }
 public enum NativePointerError: Error { case invalid, writeFailed, readbackFailed, recoveryFailed }
-public enum NativePointerProperty: CaseIterable { case resolution, acceleration }
+public enum NativePointerProperty: CaseIterable { case resolution, accelerationMultiplier, acceleration }
 public enum NativePointerTransaction {
     public static func apply(before: NativePointerValues, target: NativePointerValues,
         write: (NativePointerProperty, Int64) throws -> Void, read: () throws -> NativePointerValues) throws {
         var attempted: [NativePointerProperty] = []
-        func value(_ p: NativePointerProperty, _ v: NativePointerValues) -> Int64 { p == .resolution ? v.resolution : v.acceleration }
+        func value(_ p: NativePointerProperty, _ v: NativePointerValues) -> Int64 {
+            switch p { case .resolution: return v.resolution; case .accelerationMultiplier: return v.accelerationMultiplier; case .acceleration: return v.acceleration }
+        }
         do {
             for property in NativePointerProperty.allCases where value(property, before) != value(property, target) ||
-                (property == .acceleration && before.resolution != target.resolution) {
+                (property == .acceleration && (before.resolution != target.resolution || before.accelerationMultiplier != target.accelerationMultiplier)) {
                 attempted.append(property); try write(property, value(property, target))
             }
             guard try read() == target else { throw NativePointerError.readbackFailed }
         } catch {
             let failure = error
             do {
-                // Resolution must be restored before acceleration, whose
-                // reapplication commits the effective native tracking curve.
+                // Resolution and velocity multiplier must be restored before
+                // acceleration commits the effective native tracking curve.
                 for property in NativePointerProperty.allCases where attempted.contains(property) ||
-                    (property == .acceleration && attempted.contains(.resolution)) {
+                    (property == .acceleration && (attempted.contains(.resolution) || attempted.contains(.accelerationMultiplier))) {
                     try write(property, value(property, before))
                 }
                 guard try read() == before else { throw NativePointerError.recoveryFailed }

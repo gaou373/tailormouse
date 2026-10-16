@@ -63,10 +63,16 @@ final class NativePointer: ObservableObject {
         }
         guard let resolution = property("HIDPointerResolution"), resolution > 0,
               let acceleration = property("HIDMouseAcceleration") else { throw NativePointerError.invalid }
-        return NativePointerValues(resolution: resolution, acceleration: acceleration)
+        let multiplier = property("HIDPointerAccelerationMultiplier") ?? 65536
+        return NativePointerValues(resolution: resolution, acceleration: acceleration, accelerationMultiplier: multiplier == 0 ? 65536 : multiplier)
     }
     static func write(_ s: IOHIDServiceClient, property: NativePointerProperty, value: Int64) throws {
-        let key = property == .resolution ? "HIDPointerResolution" : "HIDMouseAcceleration"
+        let key: String
+        switch property {
+        case .resolution: key = "HIDPointerResolution"
+        case .accelerationMultiplier: key = "HIDPointerAccelerationMultiplier"
+        case .acceleration: key = "HIDMouseAcceleration"
+        }
         guard IOHIDServiceClientSetProperty(s, key as CFString, NSNumber(value: value)) else { throw NativePointerError.writeFailed }
     }
     func inspect() {
@@ -128,7 +134,8 @@ final class NativePointer: ObservableObject {
                 let id = Self.id(service)
                 guard let original = saved[id] else { continue }
                 let shared = identity(service).canonicalFamily == "razer.naga.pro" ? reference : nil
-                let target = try original.values.target(profile: selectedProfile, reference: shared)
+                let interval = (IOHIDServiceClientCopyProperty(service, "ReportInterval" as CFString) as? NSNumber)?.intValue
+                let target = try original.values.target(profile: selectedProfile, reference: shared, device: identity(service), reportInterval: interval)
                 if let shared { systemAcceleration = max(0, Double(shared.acceleration) / 65536) }
                 // Receiver services may survive a physical transport switch.
                 // Read current values even if the desired target is unchanged.
