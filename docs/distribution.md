@@ -2,7 +2,7 @@
 
 TailorMouse 0.4.0 adds Sparkle 2.9.6 (pinned in `Package.resolved`) and a universal DMG for macOS 13+. Recipients do not need Git, Node, Xcode, or a GitHub account. The public download is:
 
-https://github.com/gaou373/tailormouse/releases/latest/download/TailorMouse-0.4.0-universal.dmg
+https://github.com/gaou373/tailormouse/releases/download/v0.4.1/TailorMouse-0.4.1-universal.dmg
 
 Open the DMG, drag TailorMouse onto Applications, eject it, then open the installed app and approve Accessibility/Input Monitoring. The app starts stopped. Full side-panel support is currently verified for the original Naga Pro, not every Naga model. The image includes installation instructions, actual signing status, the application, and an Applications symlink. User settings, calibration, diagnostics, publisher credentials and research artifacts are not packaged.
 
@@ -27,10 +27,12 @@ Checks are blocked when running directly from the usual mounted image or App Tra
 3. Review the image, release notes and signing status. Commit/push the corresponding source, tag that commit as `v<version>`, and publish a GitHub release with the DMG, `appcast.xml` and `SHA256SUMS.txt` as assets. Select it as the latest release. A prerelease excluded from GitHub's latest URL will not reach this stable channel.
 4. Fetch the public assets without authentication and verify their hashes and signatures. Confirm an installed app can check the live feed. Do not modify signed XML or DMG bytes after signing; regenerate signatures/checksums if either changes.
 
-The DMG file name includes the version. For future versions, share the release page or the version's direct link, rather than the first 0.4.0 link above. A release must include its full appcast and archive together. Keep old versioned assets available for clients that already fetched an older feed.
+The DMG file name includes the version. For future versions, share the release page or the version's direct link, rather than a version-specific link. A release must include its full appcast and archive together. Keep old versioned assets available for clients that already fetched an older feed.
 
 ## Verification scope
 
 179 core tests pass, including HTTPS/key validation, open-editor protection and common disk-image/translocation paths. Both architectures build with a macOS 13 minimum; the packaged app embeds Sparkle with a bundle-relative runpath and passes recursive strict code-signature checks. The DMG checksum verifies, and read-only mounting confirms the expected files and Applications symlink. Isolated UI rendering never starts the updater or input handling. Physical hardware support on a friend's Mac and the future Developer ID/notarization path are separate acceptance checks.
 
 Public release verification on 2026-10-17: the repository was made public under the user's explicit instruction and `v0.4.0` was published as the latest release. Unauthenticated downloads of the feed and DMG match the local SHA-256 values. Independent CryptoKit verification with only the committed public key accepts both signatures and rejects single-byte changes to both payloads. An isolated Sparkle probe (no AppModel, input capture or settings access) with build 25 loaded the live signed feed and found 0.4.0/build 26. The current user-installed app was not replaced or restarted. DMG SHA-256: `38038eec2f272caa8c17048c9b7dcd5ed7a9d8d7704d054b8a788bbe1a885cb8`.
+
+Version 0.4.1/build 27 is now the latest public release and fixes held keyboard modifier inheritance. The same signature/public-download checks pass; an isolated Sparkle build-26 probe finds the signed build-27 update. The local app was updated from 0.3.13 without changing profile bytes; both existing permissions were refreshed and the app reopened stopped. The complete old-to-new Sparkle installation cycle is still not claimed tested.
