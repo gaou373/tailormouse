@@ -76,6 +76,15 @@ public struct ActionBinding: Codable, Equatable {
         self.openTarget = openTarget; self.snapDestination = snapDestination
         self.shortcutBehavior = shortcutBehavior
     }
+    /// Modifier-specific triggers consume their selector keys. Other held
+    /// keyboard modifiers compose with keyboard shortcuts, like a real key.
+    public func inheritingModifiers(_ modifiers: ModifierMask) -> Self {
+        guard action == .shortcut, var shortcut, !modifiers.isEmpty else { return self }
+        var result = self
+        shortcut.modifiers.formUnion(modifiers)
+        result.shortcut = shortcut
+        return result
+    }
     public var heldShortcut: Shortcut? {
         guard action == .shortcut, let shortcut, shortcut.isValid,
               shortcutBehavior == .hold || shortcutBehavior == .repeatWhileHeld else { return nil }
@@ -168,11 +177,19 @@ public struct MouseProfile: Codable, Equatable, Identifiable {
         if (100...111).contains(button) { return ActionBinding(action: .disabled) }
         return ActionBinding(action: button == 3 ? button3 : button == 4 ? button4 : .passthrough)
     }
+    public func outputBinding(for button: Int, modifiers: ModifierMask = []) -> ActionBinding {
+        let inherited: ModifierMask = modifierBindings["\(button):\(modifiers.rawValue)"] == nil ? modifiers : []
+        return actionBinding(for: button, modifiers: modifiers).inheritingModifiers(inherited)
+    }
     public func action(for button: Int) -> ButtonAction { actionBinding(for: button).action }
     public func wheelBinding(direction: WheelDirection, modifiers: ModifierMask = []) -> ActionBinding {
         wheelBindings["\(direction.rawValue):\(modifiers.rawValue)"] ?? wheelBindings[direction.rawValue]
             ?? ActionBinding(action: .passthrough, scrollX: direction.axis == 1 ? direction.sign * 3 : 0,
                              scrollY: direction.axis == 0 ? direction.sign * 3 : 0)
+    }
+    public func wheelOutputBinding(direction: WheelDirection, modifiers: ModifierMask = []) -> ActionBinding {
+        let inherited: ModifierMask = wheelBindings["\(direction.rawValue):\(modifiers.rawValue)"] == nil ? modifiers : []
+        return wheelBinding(direction: direction, modifiers: modifiers).inheritingModifiers(inherited)
     }
     public mutating func swapWheelBindings(horizontal: Bool, modifiers: ModifierMask = []) {
         let first: WheelDirection = horizontal ? .left : .up

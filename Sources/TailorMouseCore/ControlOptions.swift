@@ -51,7 +51,7 @@ public enum WheelActionRouter {
         guard !continuous else { return [] }
         return deltas.prefix(2).enumerated().compactMap { axis, delta in
             guard delta != 0 else { return nil }
-            let binding = profile.wheelBinding(direction: .direction(axis: axis, delta: delta), modifiers: modifiers)
+            let binding = profile.wheelOutputBinding(direction: .direction(axis: axis, delta: delta), modifiers: modifiers)
             return binding.action == .passthrough ? nil : WheelMappedAction(axis: axis, binding: binding)
         }
     }

@@ -22,7 +22,9 @@ ET.SubElement(item, f'{{{ns}}}version').text = build
 ET.SubElement(item, f'{{{ns}}}shortVersionString').text = version
 ET.SubElement(item, f'{{{ns}}}minimumSystemVersion').text = '13.0'
 ET.SubElement(item, 'pubDate').text = datetime.datetime.now(datetime.timezone.utc).strftime('%a, %d %b %Y %H:%M:%S +0000')
-ET.SubElement(item, 'description').text = 'In-app updates, universal drag-to-Applications installer, and existing Naga Pro mappings. Updates preserve local settings and reopen stopped. This preview is not Apple notarized; see the release page for installation guidance.'
+notes = Path(config_path).parent / f'notes-{version}.md'
+summary = notes.read_text().split('\n\n', 1)[0] if notes.exists() else f'TailorMouse {version}. See the release page for changes.'
+ET.SubElement(item, 'description').text = summary + ' Updates preserve local settings and reopen stopped. This preview is not Apple notarized.'
 ET.SubElement(item, 'enclosure', attrib={
     'url': f'{config["downloadBaseURL"]}/v{version}/{archive.name}',
     f'{{{ns}}}edSignature': signature,

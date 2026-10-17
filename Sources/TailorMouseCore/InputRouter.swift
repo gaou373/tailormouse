@@ -54,7 +54,8 @@ public struct InputRouter {
         }
         // Scroll has no physical release. Even a hold/repeat shortcut must be
         // emitted as a complete tap, never as an unpaired key-down.
-        emissions.append(InputEmission(button: input, binding: chord.binding))
+        let binding = chord.binding.inheritingModifiers(modifiers.subtracting(chord.modifiers))
+        emissions.append(InputEmission(button: input, binding: binding))
         return RoutingDecision(suppress: true, emissions: emissions)
     }
     @discardableResult public mutating func reset() -> [InputEmission] {
@@ -86,7 +87,7 @@ public struct InputRouter {
             return RoutingDecision(suppress: press.suppress, emissions: emissions)
         case .down:
             if let press = active[button] { return RoutingDecision(suppress: press.suppress) }
-            let binding = profile.actionBinding(for: button, modifiers: modifiers)
+            let binding = profile.outputBinding(for: button, modifiers: modifiers)
             let nativeClick = button < 3 && (binding.action == .passthrough || (binding.action == .mouseClick && binding.mouseButton == button))
             let chordBindings = profile.chords.filter { $0.isValid && $0.buttons.contains(button) }
             let pressed = Set(active.keys).union([button])
@@ -113,9 +114,10 @@ public struct InputRouter {
                         active[member]?.chordBindings.append(chord)
                     }
                 }
-                let held = chord.binding.heldShortcut != nil
-                if held { heldChords[button] = HeldChord(members: members, binding: chord.binding) }
-                emissions.append(InputEmission(button: button, binding: chord.binding, phase: held ? .down : .complete))
+                let output = chord.binding.inheritingModifiers(modifiers.subtracting(chord.modifiers))
+                let held = output.heldShortcut != nil
+                if held { heldChords[button] = HeldChord(members: members, binding: output) }
+                emissions.append(InputEmission(button: button, binding: output, phase: held ? .down : .complete))
                 return RoutingDecision(suppress: true, emissions: emissions)
             }
             let pendingButtons = active.keys.filter { active[$0]?.pending == true }.sorted()
