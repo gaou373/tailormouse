@@ -21,7 +21,7 @@ final class FixRequestControlsTests: XCTestCase {
         XCTAssertEqual(faster.acceleration, bluetooth.acceleration)
     }
     func testRequestedCategoryOrderAndEveryExistingActionIsRepresented() {
-        XCTAssertEqual(ActionCategory.allCases.map(\.rawValue), ["Click", "Scroll", "Keyboard Shortcut", "System Control", "Zoom", "Mission Control", "Music Control", "Application Switcher", "Cursor Snapping", "Open", "No Action"])
+        XCTAssertEqual(ActionCategory.allCases.map(\.rawValue), ["Click", "Scroll", "Keyboard Shortcut", "Modifier Key", "System Control", "Zoom", "Mission Control", "Music Control", "Application Switcher", "Cursor Snapping", "Open", "No Action"])
         for action in ButtonAction.allCases { XCTAssertTrue(ActionCategory.category(for: action).actions.contains(action)) }
         XCTAssertEqual(ActionCategory.category(for: .passthrough, wheel: true), .scroll)
     }

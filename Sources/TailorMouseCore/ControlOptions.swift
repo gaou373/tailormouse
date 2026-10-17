@@ -1,7 +1,7 @@
 import Foundation
 
 public enum ActionCategory: String, CaseIterable, Identifiable {
-    case click = "Click", scroll = "Scroll", shortcut = "Keyboard Shortcut", system = "System Control"
+    case click = "Click", scroll = "Scroll", shortcut = "Keyboard Shortcut", modifierKey = "Modifier Key", system = "System Control"
     case zoom = "Zoom", mission = "Mission Control", music = "Music Control", application = "Application Switcher"
     case snapping = "Cursor Snapping", open = "Open", none = "No Action"
     public var id: String { rawValue }
@@ -10,6 +10,7 @@ public enum ActionCategory: String, CaseIterable, Identifiable {
         case .click: return [.mouseClick, .passthrough]
         case .scroll: return [.scroll]
         case .shortcut: return [.shortcut]
+        case .modifierKey: return [.modifierKey]
         case .system: return [.back, .forward, .copy, .paste, .cut, .undo, .redo, .selectAll, .escape, .enter, .space, .volumeUp, .volumeDown, .mute]
         case .zoom: return [.zoomIn, .zoomOut]
         case .mission: return [.missionControl]

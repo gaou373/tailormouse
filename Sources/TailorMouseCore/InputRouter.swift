@@ -46,10 +46,10 @@ public struct InputRouter {
         let members = Set(chord.buttons)
         var emissions = flushPending(excluding: members)
         for member in members.sorted() {
-            if let press = active[member], press.held {
+            if let press = active[member], press.held, press.binding.action != .modifierKey {
                 emissions.append(InputEmission(button: member, binding: press.binding, phase: .up))
             }
-            active[member]?.held = false
+            if active[member]?.binding.action != .modifierKey { active[member]?.held = false }
             active[member]?.pending = false; active[member]?.candidates = []
         }
         // Scroll has no physical release. Even a hold/repeat shortcut must be
@@ -105,10 +105,10 @@ public struct InputRouter {
                 var emissions = flushPending(excluding: members)
                 active[button] = Press(binding: binding, suppress: true, pending: false, candidates: [], chordBindings: chordBindings)
                 for member in members {
-                    if let press = active[member], press.held {
+                    if let press = active[member], press.held, press.binding.action != .modifierKey {
                         emissions.append(InputEmission(button: member, binding: press.binding, phase: .up))
                     }
-                    active[member]?.held = false
+                    if active[member]?.binding.action != .modifierKey { active[member]?.held = false }
                     active[member]?.pending = false; active[member]?.candidates = []
                     if active[member]?.chordBindings.contains(where: { $0.id == chord.id }) == false {
                         active[member]?.chordBindings.append(chord)
@@ -119,6 +119,14 @@ public struct InputRouter {
                 if held { heldChords[button] = HeldChord(members: members, binding: output) }
                 emissions.append(InputEmission(button: button, binding: output, phase: held ? .down : .complete))
                 return RoutingDecision(suppress: true, emissions: emissions)
+            }
+            // A modifier must become active immediately, even when this
+            // button is also a chord anchor. Otherwise a hold followed by a
+            // real keyboard key could never see the modifier until mouse-up.
+            if binding.action == .modifierKey, binding.heldShortcut != nil {
+                let emissions = flushPending()
+                active[button] = Press(binding: binding, suppress: true, pending: false, candidates: [], chordBindings: chordBindings, held: true)
+                return RoutingDecision(suppress: true, emissions: emissions + [InputEmission(button: button, binding: binding, phase: .down)])
             }
             let pendingButtons = active.keys.filter { active[$0]?.pending == true }.sorted()
             var emissions: [InputEmission] = []

@@ -3,10 +3,12 @@ import Foundation
 public enum ButtonAction: String, Codable, CaseIterable, Identifiable {
     case passthrough, disabled, back, forward, copy, paste, cut, undo, redo, selectAll
     case escape, enter, space, appSwitcher, missionControl, shortcut, mouseClick, scroll
+    case modifierKey
     case zoomIn, zoomOut, playPause, nextTrack, previousTrack, volumeUp, volumeDown, mute, cursorSnap, open
     public var id: String { rawValue }
     public var title: String {
         switch self {
+        case .modifierKey: return "Modifier Key"
         case .selectAll: return "Select All"
         case .appSwitcher: return "App Switcher"
         case .missionControl: return "Mission Control"
@@ -66,15 +68,16 @@ public struct ActionBinding: Codable, Equatable {
     public var action: ButtonAction
     public var shortcut: Shortcut?
     public var shortcutBehavior: ShortcutBehavior?
+    public var modifierKey: ModifierKey?
     public var mouseButton: Int
     public var scrollX: Int
     public var scrollY: Int
     public var openTarget: String?
     public var snapDestination: String?
-    public init(action: ButtonAction = .passthrough, shortcut: Shortcut? = nil, mouseButton: Int = 0, scrollX: Int = 0, scrollY: Int = 3, openTarget: String? = nil, snapDestination: String? = nil, shortcutBehavior: ShortcutBehavior? = nil) {
+    public init(action: ButtonAction = .passthrough, shortcut: Shortcut? = nil, mouseButton: Int = 0, scrollX: Int = 0, scrollY: Int = 3, openTarget: String? = nil, snapDestination: String? = nil, shortcutBehavior: ShortcutBehavior? = nil, modifierKey: ModifierKey? = nil) {
         self.action = action; self.shortcut = shortcut; self.mouseButton = mouseButton; self.scrollX = scrollX; self.scrollY = scrollY
         self.openTarget = openTarget; self.snapDestination = snapDestination
-        self.shortcutBehavior = shortcutBehavior
+        self.shortcutBehavior = shortcutBehavior; self.modifierKey = modifierKey
     }
     /// Modifier-specific triggers consume their selector keys. Other held
     /// keyboard modifiers compose with keyboard shortcuts, like a real key.
@@ -86,6 +89,7 @@ public struct ActionBinding: Codable, Equatable {
         return result
     }
     public var heldShortcut: Shortcut? {
+        if action == .modifierKey { return modifierKey?.shortcut }
         guard action == .shortcut, let shortcut, shortcut.isValid,
               shortcutBehavior == .hold || shortcutBehavior == .repeatWhileHeld else { return nil }
         return shortcut

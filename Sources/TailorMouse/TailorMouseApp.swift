@@ -364,12 +364,14 @@ private func actionSymbol(_ action: ButtonAction) -> String {
     case .disabled: return "nosign"
     case .passthrough, .mouseClick: return "computermouse.fill"
     case .scroll: return "arrow.up.arrow.down"
+    case .modifierKey: return "command"
     default: return "keyboard"
     }
 }
 
 private func bindingTitle(_ binding: ActionBinding, button: Int) -> String {
     if binding.action == .shortcut { return binding.shortcut.map(shortcutTitle) ?? "Keyboard Shortcut…" }
+    if binding.action == .modifierKey { return binding.modifierKey.map { "\($0.mask.title) \($0.title) (held)" } ?? "Choose a modifier…" }
     if binding.action == .passthrough {
         return button < 3 ? "(\(button == 0 ? "Left Click" : button == 1 ? "Right Click" : "Middle Click"))" : "(Passthrough)"
     }
@@ -390,12 +392,6 @@ private struct ButtonActionSheet: View {
          save: @escaping (ActionBinding, Bool) -> Void) {
         self.title = title; self.inherited = inherited; self.isModifier = isModifier; self.wheel = wheel; self.save = save
         _draft = State(initialValue: initial)
-    }
-    private var shortcutModifiers: Binding<ModifierMask> {
-        Binding(get: { draft.shortcut?.modifiers ?? [] }, set: { mask in
-            var shortcut = draft.shortcut ?? Shortcut(keyCode: 0); shortcut.modifiers = mask
-            draft.shortcut = shortcut
-        })
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -419,7 +415,7 @@ private struct ButtonActionSheet: View {
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("OK") { save(draft, isModifier && draft == inherited); dismiss() }.buttonStyle(CompactConfirmationStyle())
-                    .keyboardShortcut(.defaultAction).disabled((draft.action == .shortcut && draft.shortcut == nil) || (draft.action == .open && (draft.openTarget?.isEmpty ?? true)))
+                    .keyboardShortcut(.defaultAction).disabled((draft.action == .modifierKey && draft.modifierKey == nil) || (draft.action == .shortcut && draft.shortcut == nil) || (draft.action == .open && (draft.openTarget?.isEmpty ?? true)))
             }
         }.padding(20).frame(width: 520, height: 400).font(.system(size: 13))
             .background(CompactTheme.background).tint(CompactTheme.accent).preferredColorScheme(.dark)
@@ -489,6 +485,7 @@ private struct CategoryPicker: View {
             Image(systemName: actionSymbol(binding.action))
             Picker("Action", selection: Binding(get: { ActionCategory.category(for: binding.action, wheel: wheel) }, set: { category in
                 binding.action = category.actions[0]
+                if binding.action == .modifierKey { binding.modifierKey = binding.modifierKey ?? .command; binding.shortcut = nil }
             })) {
                 ForEach(ActionCategory.allCases.dropLast()) { Text($0.rawValue).tag($0) }
                 Divider()
@@ -502,14 +499,36 @@ private struct ActionDetails: View {
     @Binding var binding: ActionBinding
     var wheel = false
     var scrollChord = false
+    @State private var pendingShortcutModifiers = ModifierMask()
+    private var recordedShortcut: Binding<Shortcut?> {
+        Binding(get: { binding.shortcut }, set: { value in
+            if var value {
+                if binding.shortcut == nil { value.modifiers.formUnion(pendingShortcutModifiers) }
+                binding.shortcut = value
+            } else { binding.shortcut = nil }
+            pendingShortcutModifiers = []
+        })
+    }
+    private var outputModifiers: Binding<ModifierMask> {
+        Binding(get: { binding.shortcut?.modifiers ?? pendingShortcutModifiers }, set: { flags in
+            if var shortcut = binding.shortcut {
+                shortcut.modifiers = flags; binding.shortcut = shortcut
+            } else { pendingShortcutModifiers = flags }
+        })
+    }
     private var category: ActionCategory { .category(for: binding.action, wheel: wheel) }
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if category == .shortcut {
-                ShortcutRecorder(shortcut: $binding.shortcut)
-                ModifierPicker(modifiers: Binding(get: { binding.shortcut?.modifiers ?? [] }, set: { flags in
-                    var shortcut = binding.shortcut ?? Shortcut(keyCode: 0); shortcut.modifiers = flags; binding.shortcut = shortcut
-                }))
+            if category == .modifierKey {
+                Picker("Key", selection: Binding(get: { binding.modifierKey ?? .command }, set: { binding.modifierKey = $0 })) {
+                    ForEach(ModifierKey.allCases) { key in Text("\(key.mask.title) \(key.title)").tag(key) }
+                }.onAppear { if binding.modifierKey == nil { binding.modifierKey = .command } }
+                Text(wheel || scrollChord ? "Sends a modifier press and release for each scroll event." : "Holds only this modifier until you release the mouse button.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else if category == .shortcut {
+                ShortcutRecorder(shortcut: recordedShortcut)
+                ModifierPicker(modifiers: outputModifiers)
+                if binding.shortcut == nil { Text("Choose a key to complete this shortcut. For Command alone, choose Modifier Key.").font(.caption).foregroundStyle(.secondary) }
                 if wheel || scrollChord {
                     Text("Wheel shortcuts run once per scroll event.").font(.caption).foregroundStyle(.secondary)
                 } else {
@@ -892,7 +911,7 @@ private struct ChordActionSheet: View {
         _draft = State(initialValue: initial); _buttonsExpanded = State(initialValue: isNew)
     }
     private var canSave: Bool {
-        draft.isValid && (draft.binding.action != .shortcut || draft.binding.shortcut != nil) &&
+        draft.isValid && (draft.binding.action != .modifierKey || draft.binding.modifierKey != nil) && (draft.binding.action != .shortcut || draft.binding.shortcut != nil) &&
             (draft.binding.action != .open || !(draft.binding.openTarget?.isEmpty ?? true))
     }
     var body: some View {
@@ -1086,9 +1105,9 @@ func chordEditorPreview(expanded: Bool = false, scroll: Bool = false) -> some Vi
     return ChordActionSheet(initial: ChordBinding(buttons: scroll ? [100, WheelDirection.up.chordInput] : [0,3], binding: ActionBinding(action: .shortcut, shortcut: Shortcut(keyCode: 51))),
         isNew: expanded, indicators: indicators, prepareRecording: {}, save: { _ in })
 }
-func buttonEditorPreview(functionKey: Int? = nil) -> some View {
+func buttonEditorPreview(functionKey: Int? = nil, modifierOnly: Bool = false, emptyShortcut: Bool = false) -> some View {
     ButtonActionSheet(title: "Button 7",
-        initial: ActionBinding(action: .shortcut, shortcut: functionKey.map { Shortcut(keyCode: 127, modifiers: .option, functionKey: $0) } ?? Shortcut(keyCode: 123, modifiers: .option)),
+        initial: modifierOnly ? ActionBinding(action: .modifierKey, modifierKey: .command) : emptyShortcut ? ActionBinding(action: .shortcut) : ActionBinding(action: .shortcut, shortcut: functionKey.map { Shortcut(keyCode: 127, modifiers: .option, functionKey: $0) } ?? Shortcut(keyCode: 123, modifiers: .option)),
         inherited: ActionBinding(), isModifier: false, save: { _, _ in })
 }
 func sideButtonsPreview() -> some View {

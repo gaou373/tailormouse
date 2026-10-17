@@ -22,6 +22,12 @@ public struct HeldShortcuts {
     private var holds: [ShortcutHoldOwner: Hold] = [:]
     private var order: UInt64 = 0
     public init() {}
+    public var heldModifiers: ModifierMask { holds.values.reduce([]) { $0.union($1.shortcut.modifierKey?.mask ?? []) } }
+    private func outputEdge(_ shortcut: Shortcut, phase: ButtonPhase) -> ShortcutKeyEdge {
+        let edge = shortcut.edges[phase == .up ? 1 : 0]
+        return ShortcutKeyEdge(keyCode: edge.keyCode, unicode: edge.unicode,
+            modifiers: shortcut.modifierKey == nil ? edge.modifiers : heldModifiers, phase: phase)
+    }
     private func sameKey(_ a: Shortcut, _ b: Shortcut) -> Bool {
         a.keyCode == b.keyCode && a.functionKey == b.functionKey
     }
@@ -39,15 +45,15 @@ public struct HeldShortcuts {
         let alreadyDown = holds.values.contains { sameKey($0.shortcut, shortcut) }
         order &+= 1
         // Match AppKit's settings; disable repeats for non-finite/off values.
-        let repeats = repeating && delay.isFinite && delay >= 0 && interval.isFinite && interval > 0
+        let repeats = repeating && shortcut.modifierKey == nil && delay.isFinite && delay >= 0 && interval.isFinite && interval > 0
         holds[owner] = Hold(shortcut: shortcut, order: order, interval: max(0.001, interval),
                             deadline: repeats ? now + delay : nil)
-        return alreadyDown ? [] : [HeldShortcutEvent(edge: shortcut.edges[0], isRepeat: false)]
+        return alreadyDown ? [] : [HeldShortcutEvent(edge: outputEdge(shortcut, phase: .down), isRepeat: false)]
     }
     public mutating func release(owner: ShortcutHoldOwner) -> [HeldShortcutEvent] {
         guard let hold = holds.removeValue(forKey: owner),
               !holds.values.contains(where: { sameKey($0.shortcut, hold.shortcut) }) else { return [] }
-        return [HeldShortcutEvent(edge: hold.shortcut.edges[1], isRepeat: false)]
+        return [HeldShortcutEvent(edge: outputEdge(hold.shortcut, phase: .up), isRepeat: false)]
     }
     public mutating func repeats(now: TimeInterval) -> [HeldShortcutEvent] {
         guard now.isFinite else { return [] }

@@ -139,11 +139,11 @@ final class MouseInterceptor {
 
     func stop() {
         timer?.invalidate(); timer = nil
-        modifierState.reset()
         shortcutRepeatWork?.cancel(); shortcutRepeatWork = nil
         for event in heldShortcuts.releaseAll() { postHeldShortcut(event) }
         nagaInput.stop(); rawKeyboardConnections.removeAll()
         for state in states.values { releaseRawPassthrough(state) }
+        modifierState.reset()
         if let tap { CGEvent.tapEnable(tap: tap, enable: false); CFMachPortInvalidate(tap) }
         if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
         source = nil; tap = nil; states.removeAll()
@@ -168,8 +168,12 @@ final class MouseInterceptor {
             if device?.identity.canonicalFamily != "razer.naga.pro" {
                 modifierState.changed(modifierMask(event.flags))
             }
+            event.flags.formUnion(eventFlags(heldShortcuts.heldModifiers, includeDeviceFlags: true))
             return Unmanaged.passUnretained(event)
         }
+        // A held modifier key must compose with ordinary keyboard, mouse and
+        // wheel input, including devices outside the remapped mouse family.
+        event.flags.formUnion(eventFlags(heldShortcuts.heldModifiers, includeDeviceFlags: true))
         let modifiers = device?.identity.canonicalFamily == "razer.naga.pro"
             ? modifierState.resolve(event: modifierMask(event.flags), hardware: modifierMask(CGEventSource.flagsState(.hidSystemState)))
             : modifierMask(event.flags)
@@ -382,7 +386,8 @@ final class MouseInterceptor {
         for input in state.bluetoothReports.route(reportID: reportID, bytes: bytes) {
             guard NagaBluetoothReportDecoder.handles(keyCode: input.keyCode, layout: layout),
                   let event = CGEvent(keyboardEventSource: nil, virtualKey: input.keyCode, keyDown: input.phase == .down) else { continue }
-            var flags = eventFlags(modifierState.resolve(event: [], hardware: modifierMask(CGEventSource.flagsState(.hidSystemState))))
+            var flags = eventFlags(modifierState.resolve(event: [], hardware: modifierMask(CGEventSource.flagsState(.hidSystemState))).union(heldShortcuts.heldModifiers))
+            flags.formUnion(eventFlags(heldShortcuts.heldModifiers, includeDeviceFlags: true))
             if input.modifiers.contains(.command) { flags.insert(.maskCommand) }
             if input.modifiers.contains(.shift) { flags.insert(.maskShift) }
             if input.modifiers.contains(.option) { flags.insert(.maskAlternate) }
@@ -522,6 +527,14 @@ final class MouseInterceptor {
             // An explicit one-shot mapped action; never used for sensitivity.
             let point = snapPoint(destination: binding.snapDestination, cursor: origin.location)
             _ = CGWarpMouseCursorPosition(point)
+        case .modifierKey:
+            guard let shortcut = binding.heldShortcut else { return }
+            // Wheel and unresolved-prefix outputs have no lasting physical
+            // hold, so complete this modifier-only tap in the same dispatch.
+            let owner = ShortcutHoldOwner(source: UUID().uuidString, button: 0)
+            for output in heldShortcuts.press(owner: owner, shortcut: shortcut, repeating: false,
+                now: ProcessInfo.processInfo.systemUptime, delay: 0, interval: 1) { postHeldShortcut(output) }
+            for output in heldShortcuts.release(owner: owner) { postHeldShortcut(output) }
         case .shortcut: if let key = binding.shortcut { shortcut(key) }
         case .mouseClick: click(button: binding.mouseButton, location: origin.location, flags: origin.flags)
         case .scroll:
@@ -581,7 +594,16 @@ final class MouseInterceptor {
     private func postHeldShortcut(_ output: HeldShortcutEvent) {
         let edge = output.edge
         guard let event = CGEvent(keyboardEventSource: nil, virtualKey: edge.keyCode, keyDown: edge.phase == .down) else { return }
-        event.flags = eventFlags(edge.modifiers)
+        if ModifierKey.allCases.contains(where: { $0.keyCode == edge.keyCode }) {
+            let physical = modifierState.resolve(event: [], hardware: modifierMask(CGEventSource.flagsState(.hidSystemState)))
+            // A real keyboard still owning this key must not get a synthetic
+            // release. Its normal flagsChanged release will arrive separately.
+            guard let flags = output.modifierOutputFlags(physical: physical) else { return }
+            event.type = .flagsChanged
+            let hardware = CGEventSource.flagsState(.hidSystemState)
+            let tracked: CGEventFlags = [.maskCommand, .maskShift, .maskAlternate, .maskControl]
+            event.flags = eventFlags(flags).union(eventFlags(edge.modifiers, includeDeviceFlags: true)).union(hardware.subtracting(tracked))
+        } else { event.flags = eventFlags(edge.modifiers) }
         if edge.unicode != nil || ShortcutKeyChoice.nativeFunctionCodes.contains(edge.keyCode) { event.flags.insert(.maskSecondaryFn) }
         if var character = edge.unicode { event.keyboardSetUnicodeString(stringLength: 1, unicodeString: &character) }
         event.setIntegerValueField(.keyboardEventAutorepeat, value: output.isRepeat ? 1 : 0)
@@ -626,12 +648,15 @@ final class MouseInterceptor {
         if flags.contains(.maskControl) { result.insert(.control) }
         return result
     }
-    private func eventFlags(_ modifiers: ModifierMask) -> CGEventFlags {
+    private func eventFlags(_ modifiers: ModifierMask, includeDeviceFlags: Bool = false) -> CGEventFlags {
         var result: CGEventFlags = []
         if modifiers.contains(.command) { result.insert(.maskCommand) }
         if modifiers.contains(.shift) { result.insert(.maskShift) }
         if modifiers.contains(.option) { result.insert(.maskAlternate) }
         if modifiers.contains(.control) { result.insert(.maskControl) }
+        if includeDeviceFlags {
+            for key in ModifierKey.allCases where modifiers.contains(key.mask) { result.formUnion(CGEventFlags(rawValue: key.deviceFlag)) }
+        }
         return result
     }
 }

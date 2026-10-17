@@ -302,7 +302,7 @@ final class AppModel: ObservableObject {
         func validButton(_ button: Int) -> Bool { (0...31).contains(button) || (100...111).contains(button) }
         func validBinding(_ binding: ActionBinding) -> Bool {
             (0...31).contains(binding.mouseButton) && (-50...50).contains(binding.scrollX) && (-50...50).contains(binding.scrollY) &&
-            (binding.shortcut.map { $0.isValid } ?? true) &&
+            (binding.shortcut.map { $0.isValid } ?? true) && (binding.action != .modifierKey || binding.modifierKey != nil) &&
             (binding.snapDestination.map { ["screen", "window"].contains($0) } ?? true) &&
             (binding.openTarget.map { $0.count <= 4096 && ($0.hasPrefix("/") || ["http", "https"].contains(URL(string: $0)?.scheme ?? "")) } ?? true)
         }
