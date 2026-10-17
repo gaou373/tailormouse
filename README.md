@@ -2,6 +2,12 @@
 
 An independently written macOS mouse customization app, informed by an evidence-based investigation of [SteerMouse](docs/research/README.md) using [REA](https://github.com/morluto/rea). TailorMouse has its own Swift source, interface, icon and JSON profiles. It contains no SteerMouse executable, assets, registration logic or imported preferences.
 
+## Download for a friend
+
+[Download TailorMouse 0.4.0 for Apple Silicon and Intel Macs](https://github.com/gaou373/tailormouse/releases/download/v0.4.0/TailorMouse-0.4.0-universal.dmg) · Requires macOS 13 or later.
+
+Open the DMG, drag TailorMouse into Applications, eject the image, then open the app. Approve Accessibility and Input Monitoring and press Start when ready. **This preview is not Apple notarized**, so macOS may require a trusted-app review at first launch. Choose **TailorMouse → Check for Updates…** for future releases; no GitHub account or developer tools are needed. [Installation, signing and update details](docs/distribution.md).
+
 ## Features
 
 - Compact tabbed window with profile/device menus and a separate button editor.

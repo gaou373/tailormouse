@@ -11,6 +11,7 @@ final class AppModel: ObservableObject {
     @Published var lastInput = "No input observed yet."
     @Published private(set) var lastSideButtonPress = "None yet"
     @Published private(set) var lastSideButtonRelease = "None yet"
+    let updater = AppUpdater()
     let devices = DeviceCatalog()
     let sensitivity = NagaSensitivity()
     let pointer = NativePointer()

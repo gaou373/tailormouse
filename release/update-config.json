@@ -1,0 +1,6 @@
+{
+  "feedURL": "https://github.com/gaou373/tailormouse/releases/latest/download/appcast.xml",
+  "publicKey": "oOOfrMEgyEczXiwKHnlAly5oMyuh8FWWtDrrJmJxrOU=",
+  "keychainAccount": "dev.tailormouse.updates",
+  "downloadBaseURL": "https://github.com/gaou373/tailormouse/releases/download"
+}

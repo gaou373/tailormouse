@@ -13,10 +13,12 @@ struct TailorMouseApp: App {
                 .onAppear {
                     NSApp.setActivationPolicy(.regular); NSApp.activate(ignoringOtherApps: true)
                     Self.adoptCompactWindowOnce()
+                    model.updater.start { [weak model] in model?.stop() }
                 }
         }
         .defaultSize(width: 680, height: 510)
         .commands {
+            CommandGroup(after: .appInfo) { UpdateMenuItem(updater: model.updater) }
             CommandGroup(replacing: .appTermination) {
                 Button("Quit TailorMouse") { model.stop(); NSApp.terminate(nil) }
                     .keyboardShortcut("q", modifiers: .command)
@@ -434,7 +436,8 @@ private struct SupportView: View {
             Text("One set of Naga Pro button profiles across USB, Bluetooth and the wireless receiver.")
             Divider()
             Button("Accessibility & Input Monitoring…", action: model.openPermissions)
-            Link("Project on GitHub", destination: URL(string: "https://github.com/gaou373/tailormouse")!)
+            AppUpdateControls(updater: model.updater)
+            Link("Downloads & Help", destination: URL(string: "https://github.com/gaou373/tailormouse")!)
             Text("Mouse handling starts only when you press Start. Cursor tracking changes apply while Running and restore when you press Stop.")
                 .font(.caption).foregroundStyle(.secondary)
         }

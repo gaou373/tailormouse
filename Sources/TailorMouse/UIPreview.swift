@@ -31,6 +31,7 @@ struct TailorMouseUIRender {
         try render(ContentView(model: model), size: NSSize(width: 680, height: 510), to: output.appendingPathComponent("buttons-modifiers.png"))
         try render(ContentView(model: model, tabName: "Wheel"), size: NSSize(width: 680, height: 510), to: output.appendingPathComponent("wheel.png"))
         try render(ContentView(model: model, tabName: "Cursor"), size: NSSize(width: 680, height: 510), to: output.appendingPathComponent("cursor.png"))
+        try render(ContentView(model: model, tabName: "Support"), size: NSSize(width: 680, height: 510), to: output.appendingPathComponent("support-updates.png"))
         model.configuration.appProfiles = [MouseProfile(name: "Timeline Editor", bundleIdentifier: "example.timeline")]
         try render(profileManagementPreview(model: model, action: .copy), size: NSSize(width: 480, height: 370), to: output.appendingPathComponent("profile-copy.png"))
         try render(profileManagementPreview(model: model, action: .transfer), size: NSSize(width: 480, height: 390), to: output.appendingPathComponent("profile-transfer.png"))
