@@ -66,7 +66,7 @@ public struct InputRouter {
         active.removeAll(); heldChords.removeAll(); return releases
     }
     public mutating func route(button: Int, phase: ButtonPhase, profile: MouseProfile, modifiers: ModifierMask = []) -> RoutingDecision {
-        guard (0...31).contains(button) || (100...111).contains(button) else { return RoutingDecision(suppress: false) }
+        guard (0...31).contains(button) || (100...113).contains(button) else { return RoutingDecision(suppress: false) }
         switch phase {
         case .drag:
             return RoutingDecision(suppress: active[button]?.suppress ?? false)

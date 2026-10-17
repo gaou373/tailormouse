@@ -48,6 +48,7 @@ public struct NagaBluetoothReportDecoder {
             layout.sequences.contains { $0.keyCodes.contains(keyCode) })
     }
     private static let usageKeys: [UInt8: UInt16] = [
+        0x68:105, 0x69:107,
         0x1e:18, 0x1f:19, 0x20:20, 0x21:21, 0x22:23, 0x23:22,
         0x24:26, 0x25:28, 0x26:25, 0x27:29, 0x2d:27, 0x2e:24, 0x28:36,
         0x59:83, 0x5a:84, 0x5b:85, 0x5c:86, 0x5d:87, 0x5e:88,

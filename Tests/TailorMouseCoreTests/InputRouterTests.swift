@@ -115,6 +115,6 @@ final class InputRouterTests: XCTestCase {
         XCTAssertFalse(mouseA.route(button: 3, phase: .up, profile: mapped).suppress)
         XCTAssertEqual(mouseA.route(button: 3, phase: .down, profile: mapped).emissions.count, 1)
         XCTAssertFalse(mouseA.route(button: -1, phase: .down, profile: mapped).suppress)
-        XCTAssertFalse(mouseA.route(button: 112, phase: .down, profile: mapped).suppress)
+        XCTAssertFalse(mouseA.route(button: 114, phase: .down, profile: mapped).suppress)
     }
 }

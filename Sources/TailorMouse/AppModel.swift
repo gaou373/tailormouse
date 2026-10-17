@@ -14,6 +14,7 @@ final class AppModel: ObservableObject {
     let updater = AppUpdater()
     let devices = DeviceCatalog()
     let sensitivity = NagaSensitivity()
+    let dpiButtons = NagaDPIButtons()
     let pointer = NativePointer()
     let indicators = InputIndicators()
     private let interceptor = MouseInterceptor()
@@ -36,7 +37,8 @@ final class AppModel: ObservableObject {
         selectedID = configuration.defaultProfile.id
         // UI rendering uses an isolated in-memory model. It never loads/saves
         // user settings, writes runtime status or starts input interception.
-        if preview { indicators.monitoringEnabled = false; sensitivity.hardwareEnabled = false; return }
+        if preview { indicators.monitoringEnabled = false; sensitivity.hardwareEnabled = false; dpiButtons.hardwareEnabled = false; return }
+        dpiButtons.failed = { [weak self] message in self?.stop(); self?.status = "DPI buttons: \(message)"; self?.writeRuntimeStatus() }
         indicators.devices = { [weak self] in self?.devices.devices ?? [] }
         indicators.family = { [weak self] in self?.configuration.selectedDeviceFamily }
         indicators.beginModifiers()
@@ -84,7 +86,7 @@ final class AppModel: ObservableObject {
                 if phase == .up { self.mouseButtonUpEvents[label, default: 0] += 1 }
             }
         }
-        interceptor.stopped = { [weak self] message in self?.pointer.stop(); self?.isRunning = false; self?.status = message; self?.writeRuntimeStatus() }
+        interceptor.stopped = { [weak self] message in self?.dpiButtons.stop(); self?.pointer.stop(); self?.isRunning = false; self?.status = message; self?.writeRuntimeStatus() }
         saveSubscription = $configuration.dropFirst().debounce(for: .milliseconds(300), scheduler: RunLoop.main).sink { [weak self] value in
             guard self?.hasEdits == true else { return }
             self?.save(value)
@@ -92,6 +94,7 @@ final class AppModel: ObservableObject {
         terminationObserver = NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
             guard let self else { return }
             self.interceptor.stop()
+            self.dpiButtons.stop()
             self.pointer.stop()
             self.isRunning = false
             self.status = "TailorMouse is closed."
@@ -113,6 +116,11 @@ final class AppModel: ObservableObject {
         if value.id == configuration.defaultProfile.id { configuration.defaultProfile = value }
         else if let index = configuration.appProfiles.firstIndex(where: { $0.id == value.id }) { configuration.appProfiles[index] = value }
         pointer.edited()
+    }
+
+    func setDPIButtonRemapping(_ enabled: Bool) {
+        guard !isRunning, !dpiButtons.busy else { return }
+        hasEdits = true; configuration.remapNagaDPIButtons = enabled
     }
 
     func updateCursorTracking(_ settings: CursorTrackingSettings) {
@@ -199,10 +207,15 @@ final class AppModel: ObservableObject {
     }
 
     func start() {
+        guard !dpiButtons.busy else { status = "Wait for DPI-button setup or recovery to finish, then press Start."; writeRuntimeStatus(); return }
+        if configuration.remapNagaDPIButtons && (configuration.nagaKeyboardLayouts["USB"]?.hasDPIButtonAliasConflict ?? false) {
+            status = "USB side-button calibration already uses F13/F14. Keep DPI remapping off until that calibration is changed."; writeRuntimeStatus(); return
+        }
         if indicators.recording { indicators.cancelRecording() }
         devices.refresh()
         if let error = interceptor.start() { status = error; writeRuntimeStatus(); return }
         isRunning = true
+        if configuration.remapNagaDPIButtons && (configuration.selectedDeviceFamily == nil || configuration.selectedDeviceFamily == "razer.naga.pro") { dpiButtons.start() }
         pointer.start()
         guard isRunning else { return }
         sideButtonDownEvents.removeAll(); sideButtonUpEvents.removeAll()
@@ -215,9 +228,10 @@ final class AppModel: ObservableObject {
     func stop() {
         if indicators.recording { indicators.cancelRecording() }
         interceptor.stop()
+        let dpiError = dpiButtons.stop()
         pointer.stop()
         isRunning = false
-        status = "Stopped. Your mouse works normally."
+        status = dpiError ?? "Stopped. Your mouse works normally."
         writeRuntimeStatus()
     }
 
@@ -230,6 +244,7 @@ final class AppModel: ObservableObject {
             "connectionCount": devices.connections.count,
             "bluetoothRawEndpointCount": interceptor.bluetoothEndpointCount,
             "rawKeyboardEndpointCount": interceptor.rawKeyboardEndpointCount,
+            "dpiButtonStatus": dpiButtons.message, "remapDPIButtons": configuration.remapNagaDPIButtons,
             "sideButtonDownEvents": sideButtonDownEvents, "sideButtonUpEvents": sideButtonUpEvents,
             "mouseButtonDownEvents": mouseButtonDownEvents, "mouseButtonUpEvents": mouseButtonUpEvents,
             "lastSideButtonPress": lastSideButtonPress, "lastSideButtonRelease": lastSideButtonRelease,
@@ -299,7 +314,7 @@ final class AppModel: ObservableObject {
     }
 
     private static func validProfile(_ profile: MouseProfile) -> Bool {
-        func validButton(_ button: Int) -> Bool { (0...31).contains(button) || (100...111).contains(button) }
+        func validButton(_ button: Int) -> Bool { (0...31).contains(button) || (100...113).contains(button) }
         func validBinding(_ binding: ActionBinding) -> Bool {
             (0...31).contains(binding.mouseButton) && (-50...50).contains(binding.scrollX) && (-50...50).contains(binding.scrollY) &&
             (binding.shortcut.map { $0.isValid } ?? true) && (binding.action != .modifierKey || binding.modifierKey != nil) &&

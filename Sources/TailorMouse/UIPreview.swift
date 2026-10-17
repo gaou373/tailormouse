@@ -24,6 +24,7 @@ struct TailorMouseUIRender {
             "7": ActionBinding(action: .shortcut, shortcut: Shortcut(keyCode: 124, modifiers: .option))
         ]
         try render(ContentView(model: model), size: NSSize(width: 680, height: 510), to: output.appendingPathComponent("buttons.png"))
+        try render(dpiSetupPreview(), size: NSSize(width: 366, height: 340), to: output.appendingPathComponent("dpi-button-setup.png"))
         try render(buttonEditorPreview(), size: NSSize(width: 520, height: 400), to: output.appendingPathComponent("button-editor.png"))
         try render(buttonEditorPreview(modifierOnly: true), size: NSSize(width: 520, height: 400), to: output.appendingPathComponent("button-editor-command-only.png"))
         try render(buttonEditorPreview(emptyShortcut: true), size: NSSize(width: 520, height: 400), to: output.appendingPathComponent("button-editor-empty-key.png"))

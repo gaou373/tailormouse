@@ -2,7 +2,7 @@
 
 TailorMouse 0.4.0 adds Sparkle 2.9.6 (pinned in `Package.resolved`) and a universal DMG for macOS 13+. Recipients do not need Git, Node, Xcode, or a GitHub account. The public download is:
 
-https://github.com/gaou373/tailormouse/releases/download/v0.4.2/TailorMouse-0.4.2-universal.dmg
+https://github.com/gaou373/tailormouse/releases/download/v0.4.3/TailorMouse-0.4.3-universal.dmg
 
 Open the DMG, drag TailorMouse onto Applications, eject it, then open the installed app and approve Accessibility/Input Monitoring. The app starts stopped. Full side-panel support is currently verified for the original Naga Pro, not every Naga model. The image includes installation instructions, actual signing status, the application, and an Applications symlink. User settings, calibration, diagnostics, publisher credentials and research artifacts are not packaged.
 

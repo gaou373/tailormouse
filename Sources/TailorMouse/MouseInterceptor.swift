@@ -183,7 +183,7 @@ final class MouseInterceptor {
             // Keyboard translation is confined to positively identified original Naga endpoints.
             guard device?.identity.canonicalFamily == "razer.naga.pro" else { return Unmanaged.passUnretained(event) }
             if let device, nagaInput.owns(device) {
-                let layout = config.nagaKeyboardLayouts[device.identity.transport] ?? NagaKeyboardLayout()
+                let layout = config.nagaInputLayout(for: device.identity)
                 let key = UInt16(clamping: event.getIntegerValueField(.keyboardEventKeycode))
                 // Raw reports own these keys on this exact Naga connection. If macOS resumes
                 // emitting their Quartz events, consume them to avoid a second
@@ -296,7 +296,7 @@ final class MouseInterceptor {
         for emission in decision.emissions { execute(emission, state: state, fallback: event) }
         if phase == .up { state.origins.removeValue(forKey: button) }
         if phase != .drag {
-            let label = button >= 100 ? "Naga side \(button - 99)" : "Mouse button \(button + 1)"
+            let label = NagaDPIButton(rawValue: button)?.title ?? (button >= 100 ? "Naga side \(button - 99)" : "Mouse button \(button + 1)")
             let detail = decision.suppress ? "handled" : "passthrough"
             let message = "\(label) · \(phase == .down ? "pressed" : "released") · \(detail) · \(device?.identity.transport ?? "mouse")"
             DispatchQueue.main.async { [weak self] in self?.observedButton(button, phase); self?.observed(message) }
@@ -359,7 +359,8 @@ final class MouseInterceptor {
             }
             let detail = decision.suppress ? "handled" : "passthrough"
             let flags = input.modifiers.isEmpty ? "" : "\(input.modifiers.title) · "
-            let message = "Naga side \(input.button - 99) · \(input.phase == .down ? "pressed" : "released") · \(flags)\(detail) · \(transport)"
+            let label = NagaDPIButton(rawValue: input.button)?.title ?? "Naga side \(input.button - 99)"
+            let message = "\(label) · \(input.phase == .down ? "pressed" : "released") · \(flags)\(detail) · \(transport)"
             DispatchQueue.main.async { [weak self] in self?.observedButton(input.button, input.phase); self?.observed(message) }
             if input.phase == .up {
                 state.origins.removeValue(forKey: input.button)
@@ -381,7 +382,7 @@ final class MouseInterceptor {
         guard config.selectedDeviceFamily == nil || config.selectedDeviceFamily == device.identity.canonicalFamily else { return }
         rawKeyboardConnections[id] = device.connectionID
         let state = states[device.connectionID] ?? InputState(); states[device.connectionID] = state
-        let layout = config.nagaKeyboardLayouts[device.identity.transport] ?? NagaKeyboardLayout()
+        let layout = config.nagaInputLayout(for: device.identity)
         let profile = config.profile(for: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
         for input in state.bluetoothReports.route(reportID: reportID, bytes: bytes) {
             guard NagaBluetoothReportDecoder.handles(keyCode: input.keyCode, layout: layout),

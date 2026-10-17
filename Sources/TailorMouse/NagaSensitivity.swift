@@ -5,6 +5,10 @@ import IOKit
 import IOKit.hid
 import TailorMouseCore
 
+/// Vendor feature-report transactions share one queue across DPI controls and
+/// temporary button assignments, preventing responses from interleaving.
+enum NagaControlQueue { static let shared = DispatchQueue(label: "dev.tailormouse.naga-control") }
+
 /// A single shared control-interface session. No input callbacks, seizure,
 /// keyboard programming, permission prompts or cursor-position manipulation.
 final class NagaDPISession {
@@ -86,7 +90,7 @@ final class NagaSensitivity: ObservableObject {
     @Published private(set) var busy = false
     @Published private(set) var message = "Read the wired mouse's current sensitivity before applying a change."
     @Published private(set) var canRestore = false
-    private let queue = DispatchQueue(label: "dev.tailormouse.dpi")
+    private let queue = NagaControlQueue.shared
     private var deviceID: UInt64?
     private var previous: NagaDPI?
     private var applied: NagaDPI?

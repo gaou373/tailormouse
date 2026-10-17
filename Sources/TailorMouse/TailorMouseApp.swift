@@ -142,7 +142,7 @@ struct ContentView: View {
                     }.pickerStyle(.segmented).labelsHidden().frame(width: 460).accessibilityLabel("Settings tabs")
                     Group {
                         if tab == .buttons {
-                            ButtonsView(profile: profile, indicators: model.indicators)
+                            ButtonsView(profile: profile, indicators: model.indicators, dpiButtons: model.dpiButtons, dpiEnabled: Binding(get: { model.configuration.remapNagaDPIButtons }, set: { model.setDPIButtonRemapping($0) }), running: model.isRunning)
                         } else if tab == .chords {
                             ChordsView(profile: profile, indicators: model.indicators, prepareRecording: { if model.isRunning { model.stop() }; catalog.refresh() })
                                 .padding(.horizontal, 12).padding(.bottom, 4)
@@ -262,16 +262,22 @@ private struct ButtonSelection: Identifiable {
 private struct ButtonsView: View {
     @Binding var profile: MouseProfile
     @ObservedObject var indicators: InputIndicators
+    @ObservedObject var dpiButtons: NagaDPIButtons
+    @Binding var dpiEnabled: Bool
+    var running: Bool
+    @State private var showDPISetup = false
     @State private var page = 0
     @State private var modifiers = ModifierMask()
     @State private var selection: ButtonSelection?
-    init(profile: Binding<MouseProfile>, indicators: InputIndicators = InputIndicators(), initialPage: Int = 0) {
+    init(profile: Binding<MouseProfile>, indicators: InputIndicators = InputIndicators(), initialPage: Int = 0,
+         dpiButtons: NagaDPIButtons = NagaDPIButtons(), dpiEnabled: Binding<Bool> = .constant(false), running: Bool = false) {
         _profile = profile; self.indicators = indicators; _page = State(initialValue: initialPage)
+        self.dpiButtons = dpiButtons; _dpiEnabled = dpiEnabled; self.running = running
     }
     private var effectiveModifiers: ModifierMask { modifiers.union(indicators.modifiers) }
     private var ordinaryButtons: [Int] { VisibleMouseButtons.ordinary(observed: indicators.observedOrdinaryButtons) }
     private var rows: [Int] {
-        page == 0 ? Array(ordinaryButtons.prefix(8)) : page == 1 ? Array(100..<106) : Array(106..<112)
+        page == 0 ? Array(ordinaryButtons.prefix(6)) + NagaDPIButton.allCases.map(\.rawValue) : page == 1 ? Array(100..<106) : Array(106..<112)
     }
     var body: some View {
         HStack(alignment: .top, spacing: 18) {
@@ -304,8 +310,8 @@ private struct ButtonsView: View {
                             .accessibilityLabel(index == 0 ? "Mouse buttons" : index == 1 ? "Side buttons 1 through 6" : "Side buttons 7 through 12")
                             .help(index == 0 ? "Mouse buttons" : index == 1 ? "Side buttons 1–6" : "Side buttons 7–12")
                     }
-                    if ordinaryButtons.count > 8 { Menu {
-                        ForEach(Array(ordinaryButtons.dropFirst(8)), id: \.self) { button in
+                    if ordinaryButtons.count > 6 { Menu {
+                        ForEach(Array(ordinaryButtons.dropFirst(6)), id: \.self) { button in
                             Button(compactButtonTitle(button)) {
                                 selection = ButtonSelection(button: button, modifiers: effectiveModifiers,
                                     binding: profile.actionBinding(for: button, modifiers: effectiveModifiers))
@@ -317,11 +323,18 @@ private struct ButtonsView: View {
             }.frame(maxWidth: .infinity)
             VStack(spacing: 12) {
                 Spacer(minLength: 25)
-                MouseIllustration(sidePanel: page > 0, selectedButton: indicators.detectedButton).frame(width: 188, height: 190)
+                MouseIllustration(sidePanel: page > 0, selectedButton: indicators.detectedButton).frame(width: 188, height: 160)
                     .onHover { indicators.hover($0) }
                 Text(indicators.detectedButton.map(compactButtonTitle) ?? indicators.inspectionMessage)
                     .font(.system(size: 10)).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true).foregroundStyle(.secondary)
-                Spacer(minLength: 16)
+                Toggle("Remap DPI buttons", isOn: $dpiEnabled).toggleStyle(.checkbox).font(.system(size: 11))
+                    .disabled(running || dpiButtons.busy)
+                    .help("Enable while stopped. DPI buttons use your mappings while Running; Stop restores their original assignments.")
+                Button("DPI setup…") { showDPISetup = true }.controlSize(.mini)
+                    .popover(isPresented: $showDPISetup) {
+                        DPIButtonSetupView(dpiButtons: dpiButtons, running: running)
+                    }
+                Spacer(minLength: 4)
                 Text(effectiveModifiers.isEmpty ? "Default mapping" : "\(effectiveModifiers.title) mapping")
                     .font(.system(size: 10)).foregroundStyle(.secondary)
                 CompactModifierPicker(modifiers: $modifiers, pressed: indicators.modifiers)
@@ -329,7 +342,7 @@ private struct ButtonsView: View {
         }.padding(.horizontal, 24).padding(.top, 2)
             .onDisappear { indicators.hover(false) }
             .onReceive(indicators.$detectionGeneration) { _ in
-                if let button = indicators.detectedButton { page = button >= 106 ? 2 : button >= 100 ? 1 : 0 }
+                if let button = indicators.detectedButton { page = NagaDPIButton(rawValue: button) != nil ? 0 : button >= 106 ? 2 : button >= 100 ? 1 : 0 }
             }
             .sheet(item: $selection) { selected in
                 ButtonActionSheet(title: compactButtonTitle(selected.button), initial: selected.binding,
@@ -349,7 +362,24 @@ private struct ButtonsView: View {
     }
 }
 
+
+private struct DPIButtonSetupView: View {
+    @ObservedObject var dpiButtons: NagaDPIButtons
+    var running: Bool
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("DPI Button Remapping").font(.headline)
+            Text("Enable Remap DPI buttons while stopped, assign DPI Up and DPI Down on the first Buttons page, then press Start.")
+            Text("Original Naga Pro · USB cable or receiver. Bluetooth is not supported yet. Only live button assignments change; saved onboard profiles stay unchanged.")
+            Text("Stop or Quit restores the original assignments. Stop before switching connections. After a crash or unplug, reconnect the same mouse and onboard profile and use Restore DPI Buttons.")
+            Text(dpiButtons.message).foregroundStyle(.secondary)
+            Button("Restore DPI Buttons", action: dpiButtons.restoreWhileStopped).disabled(running || dpiButtons.busy)
+        }.font(.callout).padding(18).frame(width: 330).fixedSize(horizontal: false, vertical: true)
+    }
+}
+
 private func compactButtonTitle(_ button: Int) -> String {
+    if let dpi = NagaDPIButton(rawValue: button) { return dpi.title }
     if button >= 100 { return "Side Button \(button - 99)" }
     switch button {
     case 0: return "Left Button"
@@ -984,6 +1014,11 @@ private struct ChordTriggerControls: View {
                                 Button(ChordButtonChoices.title(button)) { chord.buttons[index] = button }
                             }
                         }
+                        Menu("DPI buttons") {
+                            ForEach(ChordButtonChoices.dpiButtons, id: \.self) { button in
+                                Button(ChordButtonChoices.title(button)) { chord.buttons[index] = button }
+                            }
+                        }
                         Menu("Side buttons") {
                             ForEach(ChordButtonChoices.sideButtons, id: \.self) { button in
                                 Button(ChordButtonChoices.title(button)) { chord.buttons[index] = button }
@@ -1110,11 +1145,17 @@ func buttonEditorPreview(functionKey: Int? = nil, modifierOnly: Bool = false, em
         initial: modifierOnly ? ActionBinding(action: .modifierKey, modifierKey: .command) : emptyShortcut ? ActionBinding(action: .shortcut) : ActionBinding(action: .shortcut, shortcut: functionKey.map { Shortcut(keyCode: 127, modifiers: .option, functionKey: $0) } ?? Shortcut(keyCode: 123, modifiers: .option)),
         inherited: ActionBinding(), isModifier: false, save: { _, _ in })
 }
+func dpiSetupPreview() -> some View {
+    let controller = NagaDPIButtons(); controller.hardwareEnabled = false
+    return DPIButtonSetupView(dpiButtons: controller, running: false)
+        .background(CompactTheme.panel).preferredColorScheme(.dark)
+}
 func sideButtonsPreview() -> some View {
     let indicators = InputIndicators()
     indicators.monitoringEnabled = false
     indicators.detectedButton = 109
-    return ButtonsView(profile: .constant(MouseProfile()), indicators: indicators, initialPage: 2)
+    let controller = NagaDPIButtons(); controller.hardwareEnabled = false
+    return ButtonsView(profile: .constant(MouseProfile()), indicators: indicators, initialPage: 2, dpiButtons: controller)
         .padding(.vertical, 18).frame(width: 640, height: 370)
         .background(CompactTheme.panel).preferredColorScheme(.dark)
 }

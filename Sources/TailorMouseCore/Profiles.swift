@@ -108,7 +108,7 @@ public struct ChordBinding: Codable, Equatable, Identifiable {
     public var isValid: Bool {
         buttons.count >= 2 && Set(buttons).count == buttons.count &&
             buttons.filter { WheelDirection(chordInput: $0) != nil }.count <= 1 &&
-            buttons.allSatisfy { (0...31).contains($0) || (100...111).contains($0) || WheelDirection(chordInput: $0) != nil }
+            buttons.allSatisfy { (0...31).contains($0) || (100...113).contains($0) || WheelDirection(chordInput: $0) != nil }
     }
 }
 
@@ -173,12 +173,12 @@ public struct MouseProfile: Codable, Equatable, Identifiable {
     public var safeHorizontalWheelSpeed: Double { safeSpeed(horizontalWheelSpeed) }
     public var safePointerSpeed: Double { safeSpeed(pointerSpeed) }
     public func actionBinding(for button: Int, modifiers: ModifierMask = []) -> ActionBinding {
-        guard (0...31).contains(button) || (100...111).contains(button) else { return ActionBinding() }
+        guard (0...31).contains(button) || (100...113).contains(button) else { return ActionBinding() }
         if let binding = modifierBindings["\(button):\(modifiers.rawValue)"] { return binding }
         if let binding = bindings[String(button)] { return binding }
         // The Naga panel emits keyboard keys. Unassigned slots consume both
         // transitions while running; explicit Passthrough retains native typing.
-        if (100...111).contains(button) { return ActionBinding(action: .disabled) }
+        if (100...113).contains(button) { return ActionBinding(action: .disabled) }
         return ActionBinding(action: button == 3 ? button3 : button == 4 ? button4 : .passthrough)
     }
     public func outputBinding(for button: Int, modifiers: ModifierMask = []) -> ActionBinding {
@@ -222,6 +222,7 @@ public struct ProfileConfiguration: Codable, Equatable {
     public var defaultProfile: MouseProfile
     public var appProfiles: [MouseProfile]
     public var selectedDeviceFamily: String?
+    public var remapNagaDPIButtons = false
     public var nagaKeyboardLayouts: [String: NagaKeyboardLayout]
     public var nagaWiredTrackingReference: NativePointerValues?
     public var cursorTracking: CursorTrackingSettings
@@ -231,7 +232,7 @@ public struct ProfileConfiguration: Codable, Equatable {
         self.nagaWiredTrackingReference = nagaWiredTrackingReference
         self.cursorTracking = cursorTracking ?? CursorTrackingSettings(acceleration: defaultProfile.pointerAcceleration, sensitivity: defaultProfile.pointerSensitivity)
     }
-    private enum CodingKeys: String, CodingKey { case schemaVersion, defaultProfile, appProfiles, selectedDeviceFamily, nagaKeyboardLayouts, nagaWiredTrackingReference, cursorTracking }
+    private enum CodingKeys: String, CodingKey { case schemaVersion, defaultProfile, appProfiles, selectedDeviceFamily, nagaKeyboardLayouts, nagaWiredTrackingReference, cursorTracking, remapNagaDPIButtons }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let version = try c.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
@@ -239,6 +240,7 @@ public struct ProfileConfiguration: Codable, Equatable {
         defaultProfile = try c.decodeIfPresent(MouseProfile.self, forKey: .defaultProfile) ?? MouseProfile()
         appProfiles = try c.decodeIfPresent([MouseProfile].self, forKey: .appProfiles) ?? []
         selectedDeviceFamily = c.contains(.selectedDeviceFamily) ? try c.decodeIfPresent(String.self, forKey: .selectedDeviceFamily) : "razer.naga.pro"
+        remapNagaDPIButtons = try c.decodeIfPresent(Bool.self, forKey: .remapNagaDPIButtons) ?? false
         nagaKeyboardLayouts = try c.decodeIfPresent([String: NagaKeyboardLayout].self, forKey: .nagaKeyboardLayouts) ?? [:]
         nagaWiredTrackingReference = try c.decodeIfPresent(NativePointerValues.self, forKey: .nagaWiredTrackingReference)
         guard nagaWiredTrackingReference?.isValidReference ?? true else {
@@ -263,10 +265,15 @@ public struct ProfileConfiguration: Codable, Equatable {
         try c.encode(defaultProfile, forKey: .defaultProfile)
         try c.encode(appProfiles, forKey: .appProfiles)
         try c.encode(cursorTracking, forKey: .cursorTracking)
+        try c.encode(remapNagaDPIButtons, forKey: .remapNagaDPIButtons)
         try c.encode(nagaKeyboardLayouts, forKey: .nagaKeyboardLayouts)
         try c.encodeIfPresent(nagaWiredTrackingReference, forKey: .nagaWiredTrackingReference)
         if let selectedDeviceFamily { try c.encode(selectedDeviceFamily, forKey: .selectedDeviceFamily) }
         else { try c.encodeNil(forKey: .selectedDeviceFamily) }
+    }
+    public func nagaInputLayout(for identity: DeviceIdentity) -> NagaKeyboardLayout {
+        (nagaKeyboardLayouts[identity.transport] ?? NagaKeyboardLayout())
+            .includingDPIButtons(remapNagaDPIButtons && NagaDPIButton.supports(identity))
     }
     public func profile(for bundleIdentifier: String?) -> MouseProfile {
         guard let bundleIdentifier else { return defaultProfile }
