@@ -65,11 +65,12 @@ public struct InputRouter {
         } + heldChords.keys.sorted().map { InputEmission(button: $0, binding: heldChords[$0]!.binding, phase: .up) }
         active.removeAll(); heldChords.removeAll(); return releases
     }
+    public func suppressesDrag(button: Int) -> Bool { active[button]?.suppress ?? false }
     public mutating func route(button: Int, phase: ButtonPhase, profile: MouseProfile, modifiers: ModifierMask = []) -> RoutingDecision {
         guard (0...31).contains(button) || (100...113).contains(button) else { return RoutingDecision(suppress: false) }
         switch phase {
         case .drag:
-            return RoutingDecision(suppress: active[button]?.suppress ?? false)
+            return RoutingDecision(suppress: suppressesDrag(button: button))
         case .up:
             guard let press = active.removeValue(forKey: button) else { return RoutingDecision(suppress: false) }
             var emissions: [InputEmission] = []

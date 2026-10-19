@@ -12,9 +12,17 @@ final class NagaKeyboardHIDInput {
         let id: UInt64
         let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: 64)
         let format: NagaKeyboardReportFormat
+        let identity: DeviceEndpoint
         weak var owner: NagaKeyboardHIDInput?
         init(device: IOHIDDevice, id: UInt64, format: NagaKeyboardReportFormat, owner: NagaKeyboardHIDInput) {
             self.device = device; self.id = id; self.format = format; self.owner = owner
+            let product = (IOHIDDeviceGetProperty(device, kIOHIDProductIDKey as CFString) as? NSNumber)?.intValue ?? 0
+            let info = DeviceIdentity(vendorID: 0x1532, productID: product,
+                transport: IOHIDDeviceGetProperty(device, kIOHIDTransportKey as CFString) as? String ?? "Bluetooth Low Energy",
+                product: "Naga Pro", registryID: id)
+            let location = (IOHIDDeviceGetProperty(device, kIOHIDLocationIDKey as CFString) as? NSNumber)?.intValue ?? 0
+            identity = DeviceEndpoint(id: id, identity: info, senderIDs: [id],
+                connectionID: DeviceEndpoint.connectionID(identity: info, locationID: location), canIdentifyEvents: false)
         }
         deinit { buffer.deallocate() }
     }
@@ -29,19 +37,28 @@ final class NagaKeyboardHIDInput {
     var bluetoothEndpointCount: Int { endpoints.values.filter { $0.format == .bluetooth }.count }
     var endpointCount: Int { endpoints.count }
     var connectionIDs: Set<String> { Set(endpoints.keys.compactMap { identity($0)?.connectionID }) }
-    func identity(_ id: UInt64) -> DeviceEndpoint? {
-        guard let endpoint = endpoints[id] else { return nil }
-        let d = endpoint.device
-        let product = (IOHIDDeviceGetProperty(d, kIOHIDProductIDKey as CFString) as? NSNumber)?.intValue ?? 0
-        let identity = DeviceIdentity(vendorID: 0x1532, productID: product,
-            transport: IOHIDDeviceGetProperty(d, kIOHIDTransportKey as CFString) as? String ?? "Bluetooth Low Energy",
-            product: "Naga Pro", registryID: id)
-        let location = (IOHIDDeviceGetProperty(d, kIOHIDLocationIDKey as CFString) as? NSNumber)?.intValue ?? 0
-        return DeviceEndpoint(id: id, identity: identity, senderIDs: [id],
-            connectionID: DeviceEndpoint.connectionID(identity: identity, locationID: location), canIdentifyEvents: false)
-    }
+    func identity(_ id: UInt64) -> DeviceEndpoint? { endpoints[id]?.identity }
+    private let scanQueue = DispatchQueue(label: "dev.tailormouse.naga-scan", qos: .utility)
+    private var scanning = false
+    private var generation = 0
 
-    func refresh() {
+    func refresh(wait: Bool = false) {
+        if wait {
+            generation += 1
+            let current = scanQueue.sync { autoreleasepool { Self.scan() } }
+            scanning = false; attach(current); return
+        }
+        guard !scanning else { return }
+        scanning = true; let token = generation
+        scanQueue.async { [weak self] in
+            let current = autoreleasepool { Self.scan() }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.generation == token else { return }
+                self.scanning = false; self.attach(current)
+            }
+        }
+    }
+    private static func scan() -> [UInt64: (IOHIDDevice, NagaKeyboardReportFormat)] {
         let manager = IOHIDManagerCreate(kCFAllocatorDefault, 0)
         IOHIDManagerSetDeviceMatchingMultiple(manager, [0x008f,0x0090,0x0092].map {
             [kIOHIDVendorIDKey: 0x1532, kIOHIDProductIDKey: $0]
@@ -58,6 +75,9 @@ final class NagaKeyboardHIDInput {
             guard IORegistryEntryGetRegistryEntryID(IOHIDDeviceGetService(device), &id) == KERN_SUCCESS, id != 0 else { continue }
             current[id] = (device, format)
         }
+        return current
+    }
+    private func attach(_ current: [UInt64: (IOHIDDevice, NagaKeyboardReportFormat)]) {
         for id in Array(endpoints.keys) where current[id] == nil {
             detach(id); removed(id)
         }
@@ -93,6 +113,6 @@ final class NagaKeyboardHIDInput {
         IOHIDDeviceRegisterInputReportCallback(endpoint.device, endpoint.buffer, 64, nil, nil)
         IOHIDDeviceClose(endpoint.device, 0)
     }
-    func stop() { for id in Array(endpoints.keys) { detach(id) } }
+    func stop() { generation += 1; scanning = false; for id in Array(endpoints.keys) { detach(id) } }
     deinit { stop() }
 }

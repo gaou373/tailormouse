@@ -100,7 +100,7 @@ private final class NagaDPIButtonSession {
 /// product/location/serial/profile and restores only blocks still owned by us.
 final class NagaDPIButtons: ObservableObject {
     var hardwareEnabled = true
-    @Published private(set) var message = "Enable while stopped, then press Start. USB cable or receiver only."
+    @Published private(set) var message = "DPI-button remapping is unavailable pending hardware verification. Wheel recovery remains available."
     @Published private(set) var busy = false
     var failed: (String) -> Void = { _ in }
     private struct Journal: Codable {
@@ -135,68 +135,6 @@ final class NagaDPIButtons: ObservableObject {
             try recover(session, journal: journal, url: url)
         }
     }
-    private func prepare(_ session: NagaDPIButtonSession) throws -> Lease {
-        try recoverExisting(session)
-        let profile = try session.activeProfile()
-        let originals = try NagaDPIButton.allCases.map { try session.read($0.slot) }
-        let journal = Journal(product: session.product, location: session.location, serial: session.serial, profile: profile, originals: originals)
-        let url = journalURL(session)
-        do {
-            try NagaDPIButtonTransaction.apply(originals: originals, backup: {
-                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-                guard !FileManager.default.fileExists(atPath: url.path),
-                      FileManager.default.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600]) else { throw NagaDPIButtonError.recovery }
-                let data = try JSONEncoder().encode(journal)
-                let file = try FileHandle(forWritingTo: url)
-                try file.write(contentsOf: data); try file.synchronize(); try file.close()
-                guard try Data(contentsOf: url) == data, try session.activeProfile() == profile else { throw NagaDPIButtonError.recovery }
-            }, write: { try session.write($0, profile: profile) })
-            guard try session.activeProfile() == profile else { throw NagaDPIButtonError.recovery }
-        } catch {
-            // Includes failed/landed writes and process interruption during setup.
-            // Keep the journal if recovery cannot prove the original state.
-            if FileManager.default.fileExists(atPath: url.path) { try? recover(session, journal: journal, url: url) }
-            throw error
-        }
-        return Lease(session: session, journal: journal, url: url)
-    }
-    func start() {
-        guard hardwareEnabled, !active, !busy else { return }
-        active = true; generation += 1
-        message = "Preparing and verifying DPI Up / DPI Down…"
-        poll()
-        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.poll() }
-    }
-    private func poll() {
-        guard active, !busy else { return }
-        busy = true; let token = generation
-        queue.async { [weak self] in
-            guard let self else { return }
-            do {
-                let sessions = try NagaDPIButtonSession.discover(existing: self.leases.mapValues(\.session))
-                let present = Set(sessions.map(\.registryID))
-                // An unplug leaves the durable recovery record for the next
-                // connection; never send a restore to another interface.
-                self.leases = self.leases.filter { present.contains($0.key) }
-                for session in sessions {
-                    if let lease = self.leases[session.registryID] {
-                        guard try session.activeProfile() == lease.journal.profile else { throw NagaDPIButtonError.recovery }
-                    } else { self.leases[session.registryID] = try self.prepare(session) }
-                }
-                let message = sessions.isEmpty ? "Connect a Naga Pro by USB cable or receiver. Bluetooth DPI-button remapping is unavailable." : "DPI Up and DPI Down are ready. Stop restores the original live assignments."
-                DispatchQueue.main.async { [weak self] in
-                    guard let self, self.generation == token else { return }
-                    self.busy = false; self.message = message
-                }
-            } catch {
-                let message = error.localizedDescription
-                DispatchQueue.main.async { [weak self] in
-                    guard let self, self.generation == token else { return }
-                    self.busy = false; self.message = message; self.failed(message)
-                }
-            }
-        }
-    }
     @discardableResult func stop() -> String? {
         guard hardwareEnabled else { return nil }
         active = false; generation += 1; timer?.invalidate(); timer = nil
@@ -210,8 +148,8 @@ final class NagaDPIButtons: ObservableObject {
         }
         busy = false
         let pending = ((try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []).contains { $0.hasSuffix(".json") }
-        if failure == nil && pending { failure = "DPI-button recovery is pending. Reconnect the same mouse/profile and choose Restore DPI Buttons." }
-        message = failure ?? "Stopped. Original DPI-button assignments restored for connected mice."
+        if failure == nil && pending { failure = "DPI-button recovery is pending. Reconnect the same mouse/profile and choose Restore Wheel Assignments." }
+        message = failure ?? "Stopped. Original wheel assignments restored for connected mice."
         return failure
     }
     func restoreWhileStopped() {
@@ -219,11 +157,11 @@ final class NagaDPIButtons: ObservableObject {
         busy = true; let token = generation
         queue.async { [weak self] in
             guard let self else { return }
-            var message = "No connected USB/receiver DPI-button recovery was needed."
+            var message = "No connected USB/receiver wheel recovery was needed."
             do {
                 for session in try NagaDPIButtonSession.discover() {
                     if FileManager.default.fileExists(atPath: self.journalURL(session).path) {
-                        try self.recoverExisting(session); message = "Original DPI-button assignments restored and verified."
+                        try self.recoverExisting(session); message = "Original wheel assignments restored and verified."
                     }
                 }
             } catch { message = error.localizedDescription }

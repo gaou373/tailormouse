@@ -18,6 +18,9 @@ final class DeviceCatalog: ObservableObject {
         [kIOHIDVendorIDKey: 0x1532]
     ]
     private var refreshTimer: Timer?
+    private let scanQueue = DispatchQueue(label: "dev.tailormouse.device-scan", qos: .utility)
+    private var scanning = false
+    private var generation = 0
 
     init() {
         refresh()
@@ -28,14 +31,36 @@ final class DeviceCatalog: ObservableObject {
 
     deinit { refreshTimer?.invalidate() }
 
-    func refresh() {
+    func refresh(wait: Bool = false) {
+        if wait {
+            // Explicit Start may wait once for fresh attribution. Periodic
+            // refreshes never block the input loop; stale completions lose.
+            generation += 1
+            let found = scanQueue.sync { autoreleasepool { scan() } }
+            scanning = false; publish(found); return
+        }
+        guard !scanning else { return }
+        scanning = true; generation += 1; let token = generation
+        scanQueue.async { [weak self] in
+            guard let self else { return }
+            let found = autoreleasepool { self.scan() }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.generation == token else { return }
+                self.scanning = false; self.publish(found)
+            }
+        }
+    }
+    private func publish(_ found: [DetectedDevice]) {
+        if devices != found { devices = found; connections = DeviceConnection.grouping(found) }
+    }
+    private func scan() -> [DetectedDevice] {
         // A fresh, unscheduled manager makes each poll a current enumeration;
         // no input run-loop sources or device-arrival callbacks are needed.
         let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
         IOHIDManagerSetDeviceMatchingMultiple(manager, matches as CFArray)
         let connected = (IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice>) ?? []
         var seenRegistryIDs: Set<UInt64> = []
-        devices = connected.compactMap { device in
+        return connected.compactMap { device in
             let vendorID = integerProperty(device, kIOHIDVendorIDKey)
             let isPointing = IOHIDDeviceConformsTo(device, 1, 2) || IOHIDDeviceConformsTo(device, 1, 1)
             // No unrelated keyboard interface is admitted or monitored.
@@ -61,7 +86,6 @@ final class DeviceCatalog: ObservableObject {
             if $0.identity.product == $1.identity.product { return $0.id < $1.id }
             return $0.identity.product.localizedStandardCompare($1.identity.product) == .orderedAscending
         }
-        connections = DeviceConnection.grouping(devices)
     }
 
     func device(forSenderID senderID: UInt64) -> DetectedDevice? {

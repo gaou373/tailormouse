@@ -4,7 +4,7 @@ An independently written macOS mouse customization app, informed by an evidence-
 
 ## Download for a friend
 
-[Download TailorMouse 0.4.3 for Apple Silicon and Intel Macs](https://github.com/gaou373/tailormouse/releases/download/v0.4.3/TailorMouse-0.4.3-universal.dmg) · Requires macOS 13 or later.
+[Download TailorMouse 0.4.5 for Apple Silicon and Intel Macs](https://github.com/gaou373/tailormouse/releases/download/v0.4.5/TailorMouse-0.4.5-universal.dmg) · Requires macOS 13 or later.
 
 Open the DMG, drag TailorMouse into Applications, eject the image, then open the app. Approve Accessibility and Input Monitoring and press Start when ready. **This preview is not Apple notarized**, so macOS may require a trusted-app review at first launch. Choose **TailorMouse → Check for Updates…** for future releases; no GitHub account or developer tools are needed. [Installation, signing and update details](docs/distribution.md).
 
@@ -18,7 +18,7 @@ Open the DMG, drag TailorMouse into Applications, eject the image, then open the
 - Separate horizontal/vertical wheel speed and direction controls.
 - Live native acceleration and sensitivity sliders with numeric controls, with original tracking restored on Stop.
 - Wired Naga Pro hardware DPI slider with verified writes, backups and Restore.
-- Opt-in physical DPI Up/Down remapping over USB cable or receiver, with restoration on Stop.
+- Recovery for older wheel assignments; physical DPI-button remapping is disabled pending hardware verification.
 - Ordered action categories, roll-direction assignments and physical modifier highlighting.
 - Read-only button identification while hovering over the mouse illustration.
 - Device discovery.
@@ -62,7 +62,7 @@ The original wired Naga Pro has separate explicit [onboard diagnostics](docs/res
 
 Version 0.2.7 reads original Naga Pro Bluetooth keyboard report 6 directly while Running. Repeated snapshots are filtered, held keys retain their matching releases, and the existing shared profiles still choose actions. Recognized native Quartz copies are consumed when the raw reader owns that endpoint; generated Passthrough events are tagged so they are not handled again. Stop/disconnect attempts a release for every synthetic Passthrough key still held. The reader uses shared access and stops with handling; it never changes mouse firmware, keyboard rules or pointer movement.
 
-Physical **DPI Up** and **DPI Down** now appear on the first Buttons page. While stopped, enable **Remap DPI buttons**, assign actions, then press Start. Stop restores the original live assignments. Bluetooth DPI-button remapping is not yet supported; [setup and recovery details](docs/dpi-buttons.md). The Cursor DPI slider and presets remain separate.
+Physical **DPI Up** and **DPI Down** remapping is disabled in 0.4.5: the earlier implementation incorrectly addressed the scroll wheel. Saved actions are retained, and legacy wheel restoration remains available; see [verification and recovery details](docs/dpi-buttons.md). The Cursor hardware-DPI slider and presets remain separate.
 
 ## Research
 

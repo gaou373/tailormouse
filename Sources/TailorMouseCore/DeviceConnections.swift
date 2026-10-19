@@ -1,7 +1,7 @@
 import Foundation
 
 /// One HID interface, retained separately for exact event attribution.
-public struct DeviceEndpoint: Identifiable {
+public struct DeviceEndpoint: Identifiable, Equatable {
     public let id: UInt64
     public let identity: DeviceIdentity
     public let senderIDs: Set<UInt64>
@@ -26,7 +26,7 @@ public struct DeviceEndpoint: Identifiable {
 }
 
 /// UI representation of a physical connection, rather than one row per interface.
-public struct DeviceConnection: Identifiable {
+public struct DeviceConnection: Identifiable, Equatable {
     public let id: String
     public let identity: DeviceIdentity
     public let endpointIDs: Set<UInt64>

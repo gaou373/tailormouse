@@ -77,6 +77,13 @@ public struct NagaKeyboardDecoder {
     private var held: [UInt16: Held] = [:]
     private var pending: Pending?
     public init() {}
+    /// Native key presses already owned when a raw interface is attached must
+    /// receive its raw release, rather than becoming inherited pre-Start keys.
+    public var ownedKeys: Set<UInt16> {
+        var keys = Set(held.keys)
+        if let pending, pending.up == nil { keys.insert(pending.down.keyCode) }
+        return keys
+    }
     public var pendingDeadline: TimeInterval? { pending?.deadline }
     public var retainedTokens: Set<UInt64> {
         guard let pending else { return [] }

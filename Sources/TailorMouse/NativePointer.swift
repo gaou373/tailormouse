@@ -5,12 +5,115 @@ import IOKit.hidsystem
 import TailorMouseCore
 import NativeHIDBridge
 
-/// Uses HID service properties through a dynamically resolved SPI client.
-/// Parameters are per service and restored when handling stops.
+/// Main-thread observable facade. All HID enumeration/property transactions
+/// run on one worker; Stop drains it and restores before returning.
 final class NativePointer: ObservableObject {
     @Published private(set) var message = "Changes take effect while Running."
     @Published private(set) var systemAcceleration = 0.8
     @Published private(set) var supported = false
+    var configuration: () -> ProfileConfiguration = { ProfileConfiguration() }
+    var profile: () -> MouseProfile = { MouseProfile() }
+    var captureWiredReference: (NativePointerValues) -> Void = { _ in }
+    var failed: (String) -> Void = { _ in }
+    var hardwareEnabled = true
+    private let hardware: PointerHardwareWorking
+    private let queue = DispatchQueue(label: "dev.tailormouse.tracking", qos: .userInitiated)
+    private var active = false
+    private var generation = 0
+    private var workID = 0
+    private var busy = false
+    private var needsUpdate = false
+    private var timer: Timer?
+    private var pending: DispatchWorkItem?
+
+    init() { hardware = PointerHardwareState() }
+    init(hardware: PointerHardwareWorking) { self.hardware = hardware }
+    func inspect() { if hardwareEnabled, !active { submit() } }
+    func start() {
+        guard hardwareEnabled, !active else { return }
+        active = true; generation += 1
+        submit()
+        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.submit() }
+    }
+    func edited() {
+        guard active else { inspect(); return }
+        pending?.cancel()
+        let item = DispatchWorkItem { [weak self] in self?.submit() }
+        pending = item; DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: item)
+    }
+    private func publish(message: String, acceleration: Double, supported: Bool) {
+        if self.message != message { self.message = message }
+        if systemAcceleration != acceleration { systemAcceleration = acceleration }
+        if self.supported != supported { self.supported = supported }
+    }
+    private func submit() {
+        if busy { needsUpdate = true; return }
+        busy = true; needsUpdate = false; workID += 1
+        let id = workID, token = generation, running = active
+        let config = configuration(), selected = profile()
+        queue.async { [weak self] in
+            guard let self else { return }
+            let result = autoreleasepool { () -> (String, Double, Bool, NativePointerValues?, String?) in
+                var snapshot = config
+                var captured: NativePointerValues?
+                var failure: String?
+                self.hardware.configuration = { snapshot }
+                self.hardware.profile = { selected }
+                self.hardware.captureWiredReference = { values in
+                    snapshot.nagaWiredTrackingReference = values; captured = values
+                }
+                self.hardware.failed = { failure = $0 }
+                if running { self.hardware.start() } else { self.hardware.inspect() }
+                return (self.hardware.message, self.hardware.systemAcceleration, self.hardware.supported, captured, failure)
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.workID == id else { return }
+                self.busy = false
+                if self.generation == token {
+                    if let captured = result.3 { self.captureWiredReference(captured) }
+                    self.publish(message: result.0, acceleration: result.1, supported: result.2)
+                    if let failure = result.4 { self.failed(failure); return }
+                }
+                if self.needsUpdate { self.submit() }
+            }
+        }
+    }
+    func stop() {
+        guard hardwareEnabled else { return }
+        active = false; generation += 1; workID += 1
+        pending?.cancel(); pending = nil; timer?.invalidate(); timer = nil
+        needsUpdate = false
+        // No queued write can outlive Stop; stale UI completions are discarded.
+        let result = queue.sync { () -> (String, Double, Bool) in
+            autoreleasepool {
+                hardware.stop()
+                return (hardware.message, hardware.systemAcceleration, hardware.supported)
+            }
+        }
+        busy = false
+        publish(message: result.0, acceleration: result.1, supported: result.2)
+    }
+}
+
+protocol PointerHardwareWorking: AnyObject {
+    var message: String { get }
+    var systemAcceleration: Double { get }
+    var supported: Bool { get }
+    var configuration: () -> ProfileConfiguration { get set }
+    var profile: () -> MouseProfile { get set }
+    var captureWiredReference: (NativePointerValues) -> Void { get set }
+    var failed: (String) -> Void { get set }
+    func inspect()
+    func start()
+    func stop()
+}
+
+/// Uses HID service properties through a dynamically resolved SPI client.
+/// Parameters are per service and restored when handling stops.
+private final class PointerHardwareState: PointerHardwareWorking {
+    private(set) var message = "Changes take effect while Running."
+    private(set) var systemAcceleration = 0.8
+    private(set) var supported = false
     private var client: IOHIDEventSystemClient?
     private struct Saved { let values: NativePointerValues }
     private var saved: [UInt64: Saved] = [:]
@@ -19,8 +122,6 @@ final class NativePointer: ObservableObject {
     var profile: () -> MouseProfile = { MouseProfile() }
     var captureWiredReference: (NativePointerValues) -> Void = { _ in }
     var failed: (String) -> Void = { _ in }
-    private var pending: DispatchWorkItem?
-    private var timer: Timer?
 
     private func identity(_ service: IOHIDServiceClient) -> DeviceIdentity {
         let vendor = (IOHIDServiceClientCopyProperty(service, "VendorID" as CFString) as? NSNumber)?.intValue ?? 0
@@ -85,17 +186,7 @@ final class NativePointer: ObservableObject {
             message = supported ? (usingNagaReference ? "Shared tracking uses your wired USB reference. Press Start to apply it." : "Changes take effect while Running. Connect by USB cable once to establish shared Naga tracking.") : "Connect a supported mouse to adjust tracking."
         }
     }
-    func start() {
-        active = true; update()
-        guard active else { return }
-        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.update() }
-    }
-    func edited() {
-        guard active else { inspect(); return }
-        pending?.cancel()
-        let item = DispatchWorkItem { [weak self] in self?.update() }
-        pending = item; DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: item)
-    }
+    func start() { active = true; update() }
     private func update() {
         guard active else { return }
         do {
@@ -152,7 +243,7 @@ final class NativePointer: ObservableObject {
         }
     }
     func stop() {
-        active = false; pending?.cancel(); pending = nil; timer?.invalidate(); timer = nil
+        active = false
         // Retained clients can report pre-write values. Restore and verify on
         // a fresh service snapshot; disconnected services need no writes.
         client = TMCreatePointerClient()

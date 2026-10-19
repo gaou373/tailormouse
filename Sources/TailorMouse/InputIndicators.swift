@@ -38,10 +38,10 @@ final class InputIndicators: ObservableObject {
         }
         modifiers = mask(NSEvent.modifierFlags)
         if let local = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged, handler: { [weak self] event in
-            self?.modifiers = mask(event.modifierFlags); return event
+            if let self { let next = mask(event.modifierFlags); if self.modifiers != next { self.modifiers = next } }; return event
         }) { monitors.append(local) }
         if let global = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged, handler: { [weak self] event in
-            DispatchQueue.main.async { self?.modifiers = mask(event.modifierFlags) }
+            DispatchQueue.main.async { if let self { let next = mask(event.modifierFlags); if self.modifiers != next { self.modifiers = next } } }
         }) { monitors.append(global) }
     }
     func observed(button: Int, phase: ButtonPhase) {
@@ -131,7 +131,7 @@ final class InputIndicators: ObservableObject {
         }
         rawKeyboard.removed = { [weak self] id in self?.reports.removeValue(forKey: id) }
         rawKeyboard.failed = { [weak self] value in self?.inspectionMessage = value }
-        if family() == nil || family() == "razer.naga.pro" { rawKeyboard.refresh() }
+        if family() == nil || family() == "razer.naga.pro" { rawKeyboard.refresh(wait: true) }
     }
     private func observe(_ type: CGEventType, _ event: CGEvent) {
         guard [.leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp, .otherMouseDown, .otherMouseUp, .keyDown, .keyUp, .scrollWheel].contains(type) else { return }

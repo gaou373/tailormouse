@@ -23,6 +23,8 @@ final class AppModel: ObservableObject {
     private var saveSubscription: AnyCancellable?
     private var terminationObserver: NSObjectProtocol?
     private var hasEdits = false
+    private var statusWork: DispatchWorkItem?
+    private let statusQueue = DispatchQueue(label: "dev.tailormouse.runtime-status", qos: .utility)
     private var originalNeedsBackup = false
     private var sideButtonDownEvents: [String: Int] = [:]
     private var sideButtonUpEvents: [String: Int] = [:]
@@ -37,7 +39,7 @@ final class AppModel: ObservableObject {
         selectedID = configuration.defaultProfile.id
         // UI rendering uses an isolated in-memory model. It never loads/saves
         // user settings, writes runtime status or starts input interception.
-        if preview { indicators.monitoringEnabled = false; sensitivity.hardwareEnabled = false; dpiButtons.hardwareEnabled = false; return }
+        if preview { indicators.monitoringEnabled = false; sensitivity.hardwareEnabled = false; dpiButtons.hardwareEnabled = false; pointer.hardwareEnabled = false; return }
         dpiButtons.failed = { [weak self] message in self?.stop(); self?.status = "DPI buttons: \(message)"; self?.writeRuntimeStatus() }
         indicators.devices = { [weak self] in self?.devices.devices ?? [] }
         indicators.family = { [weak self] in self?.configuration.selectedDeviceFamily }
@@ -57,6 +59,8 @@ final class AppModel: ObservableObject {
                 let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
                 originalNeedsBackup = (json?["schemaVersion"] as? Int) != 3
                 configuration = loaded
+                // Retire the incorrect wheel-based DPI opt-in without altering mappings.
+                configuration.remapNagaDPIButtons = false
                 selectedID = loaded.defaultProfile.id
             } catch {
                 originalNeedsBackup = true
@@ -98,7 +102,8 @@ final class AppModel: ObservableObject {
             self.pointer.stop()
             self.isRunning = false
             self.status = "TailorMouse is closed."
-            self.writeRuntimeStatus()
+            self.statusWork?.cancel(); self.statusWork = nil
+            self.persistRuntimeStatus(wait: true)
             if self.hasEdits { self.save(self.configuration) }
         }
         devices.refresh()
@@ -120,7 +125,7 @@ final class AppModel: ObservableObject {
 
     func setDPIButtonRemapping(_ enabled: Bool) {
         guard !isRunning, !dpiButtons.busy else { return }
-        hasEdits = true; configuration.remapNagaDPIButtons = enabled
+        hasEdits = true; configuration.remapNagaDPIButtons = false
     }
 
     func updateCursorTracking(_ settings: CursorTrackingSettings) {
@@ -208,14 +213,10 @@ final class AppModel: ObservableObject {
 
     func start() {
         guard !dpiButtons.busy else { status = "Wait for DPI-button setup or recovery to finish, then press Start."; writeRuntimeStatus(); return }
-        if configuration.remapNagaDPIButtons && (configuration.nagaKeyboardLayouts["USB"]?.hasDPIButtonAliasConflict ?? false) {
-            status = "USB side-button calibration already uses F13/F14. Keep DPI remapping off until that calibration is changed."; writeRuntimeStatus(); return
-        }
         if indicators.recording { indicators.cancelRecording() }
-        devices.refresh()
+        devices.refresh(wait: true)
         if let error = interceptor.start() { status = error; writeRuntimeStatus(); return }
         isRunning = true
-        if configuration.remapNagaDPIButtons && (configuration.selectedDeviceFamily == nil || configuration.selectedDeviceFamily == "razer.naga.pro") { dpiButtons.start() }
         pointer.start()
         guard isRunning else { return }
         sideButtonDownEvents.removeAll(); sideButtonUpEvents.removeAll()
@@ -238,6 +239,17 @@ final class AppModel: ObservableObject {
     /// Local diagnostic snapshot: status and mouse-button labels only, never
     /// typed characters, general keyboard events or a history of input.
     private func writeRuntimeStatus() {
+        // At most ten diagnostic snapshots per second, retaining the latest
+        // counters. Neither serialization nor atomic disk I/O belongs on input.
+        guard statusWork == nil else { return }
+        let item = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.statusWork = nil; self.persistRuntimeStatus()
+        }
+        statusWork = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: item)
+    }
+    private func persistRuntimeStatus(wait: Bool = false) {
         let snapshot: [String: Any] = [
             "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development",
             "isRunning": isRunning, "status": status, "lastInput": lastInput,
@@ -248,15 +260,22 @@ final class AppModel: ObservableObject {
             "sideButtonDownEvents": sideButtonDownEvents, "sideButtonUpEvents": sideButtonUpEvents,
             "mouseButtonDownEvents": mouseButtonDownEvents, "mouseButtonUpEvents": mouseButtonUpEvents,
             "lastSideButtonPress": lastSideButtonPress, "lastSideButtonRelease": lastSideButtonRelease,
-            "updatedAt": ISO8601DateFormatter().string(from: Date())
+            "updatedAt": Date().timeIntervalSince1970
         ]
         let url = settingsURL.deletingLastPathComponent().appendingPathComponent("runtime-status.json")
-        // Diagnostics must never interrupt input processing or profile saving.
-        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if let data = try? JSONSerialization.data(withJSONObject: snapshot, options: [.sortedKeys]) {
-            try? data.write(to: url, options: .atomic)
+        let write = {
+            autoreleasepool {
+                var record = snapshot
+                record["updatedAt"] = ISO8601DateFormatter().string(from: Date())
+                try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                if let data = try? JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]) {
+                    try? data.write(to: url, options: .atomic)
+                }
+            }
         }
+        if wait { statusQueue.sync(execute: write) } else { statusQueue.async(execute: write) }
     }
+
     func openPermissions() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") { NSWorkspace.shared.open(url) }
     }
@@ -274,6 +293,8 @@ final class AppModel: ObservableObject {
             if isRunning { stop() }
             hasEdits = true
             configuration = loaded
+                // Retire the incorrect wheel-based DPI opt-in without altering mappings.
+                configuration.remapNagaDPIButtons = false
             selectedID = loaded.defaultProfile.id
             if save(loaded) { status = "Profiles imported. Press Start when you are ready." }
         } catch { status = "Import failed: \(error.localizedDescription)" }

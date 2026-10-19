@@ -12,6 +12,8 @@ final class MouseInterceptor {
     private let generatedTag: Int64 = 0x5441494c4f52
     private let senderField = CGEventField(rawValue: 87)!
     private var keyboardToken: UInt64 = 0
+    private var workspaceObservers: [NSObjectProtocol] = []
+    private var competingManagers: Set<Int32> = []
     private var requestedAccessibilityApproval = false
     private var heldShortcuts = HeldShortcuts()
     private var shortcutRepeatWork: DispatchWorkItem?
@@ -101,12 +103,27 @@ final class MouseInterceptor {
         modifierState.begin(snapshot: keyboardModifiers().union(modifierMask(CGEventSource.flagsState(.hidSystemState))))
         CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: newTap, enable: true)
+        competingManagers = Self.steerMouseProcessIDs
+        let center = NSWorkspace.shared.notificationCenter
+        workspaceObservers = [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification].map { name in
+            center.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                guard let self, let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
+                if note.name == NSWorkspace.didTerminateApplicationNotification { self.competingManagers.remove(app.processIdentifier) }
+                else if app.bundleIdentifier == "jp.plentycom.boa.SteerMouse" || (app.localizedName?.localizedCaseInsensitiveContains("SteerMouse Manager") ?? false) {
+                    self.competingManagers.insert(app.processIdentifier)
+                }
+                if !self.competingManagers.isEmpty {
+                    self.stop(); self.stopped("Stopped because SteerMouse Manager started.")
+                }
+            }
+        }
+        if !competingManagers.isEmpty { stop(); return "SteerMouse Manager is running. Quit it before starting TailorMouse." }
         nagaInput.report = { [weak self] id, reportID, bytes in self?.handleRawKeyboard(id, reportID: reportID, bytes: bytes) }
         nagaInput.baseline = { [weak self] id, bytes in
             guard let self, let device = self.devices().first(where: { $0.id == id }) ?? self.nagaInput.identity(id) else { return }
             let state = self.states[device.connectionID] ?? InputState()
             self.states[device.connectionID] = state
-            state.bluetoothReports.prime(reportID: 6, bytes: bytes)
+            state.bluetoothReports.prime(reportID: 6, bytes: bytes, alreadyOwned: state.keyboard.ownedKeys)
         }
         nagaInput.removed = { [weak self] id in
             guard let self else { return }
@@ -119,10 +136,10 @@ final class MouseInterceptor {
         nagaInput.failed = { [weak self] message in
             DispatchQueue.main.async { self?.stop(); self?.stopped(message) }
         }
-        if configuration().selectedDeviceFamily == nil || configuration().selectedDeviceFamily == "razer.naga.pro" { nagaInput.refresh() }
+        if configuration().selectedDeviceFamily == nil || configuration().selectedDeviceFamily == "razer.naga.pro" { nagaInput.refresh(wait: true) }
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             guard let self else { return }
-            if Self.steerMouseIsRunning {
+            if !self.competingManagers.isEmpty {
                 self.stop(); self.stopped("Stopped because SteerMouse Manager started.")
             } else if !AXIsProcessTrusted() || !CGPreflightListenEventAccess() {
                 self.stop(); self.stopped("Stopped because input permission was removed.")
@@ -138,6 +155,8 @@ final class MouseInterceptor {
     }
 
     func stop() {
+        for observer in workspaceObservers { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
+        workspaceObservers.removeAll(); competingManagers.removeAll()
         timer?.invalidate(); timer = nil
         shortcutRepeatWork?.cancel(); shortcutRepeatWork = nil
         for event in heldShortcuts.releaseAll() { postHeldShortcut(event) }
@@ -158,6 +177,29 @@ final class MouseInterceptor {
         }
         guard event.getIntegerValueField(.eventSourceUserData) != generatedTag else {
             return Unmanaged.passUnretained(event)
+        }
+        if type == .mouseMoved {
+            // Raw/locked-cursor apps can deliver thousands of these per second.
+            // Preserve the original event and deltas without HID/app lookups.
+            let held = heldShortcuts.heldModifiers
+            if !held.isEmpty { event.flags.formUnion(eventFlags(held, includeDeviceFlags: true)) }
+            return Unmanaged.passUnretained(event)
+        }
+        if type == .leftMouseDragged || type == .rightMouseDragged || type == .otherMouseDragged {
+            let held = heldShortcuts.heldModifiers
+            if !held.isEmpty { event.flags.formUnion(eventFlags(held, includeDeviceFlags: true)) }
+            let sender = UInt64(bitPattern: event.getIntegerValueField(senderField))
+            let device = DeviceEndpoint.matching(senderID: sender, in: devices())
+            let connection = device?.connectionID ?? "unknown.\(sender)"
+            guard let state = states[connection] else { return Unmanaged.passUnretained(event) }
+            // A real drag must still release a delayed calibrated click prefix
+            // before consulting that press's captured suppression decision.
+            if state.mousePrelude.pendingDeadline != nil {
+                replayMousePrelude(state.mousePrelude.flush(), state: state)
+                scheduleMousePreludeExpiry(state: state, connection: connection)
+            }
+            let button = type == .leftMouseDragged ? 0 : type == .rightMouseDragged ? 1 : Int(event.getIntegerValueField(.mouseEventButtonNumber))
+            return state.router.suppressesDrag(button: button) ? nil : Unmanaged.passUnretained(event)
         }
         let config = configuration()
         let sender = UInt64(bitPattern: event.getIntegerValueField(senderField))
@@ -199,7 +241,7 @@ final class MouseInterceptor {
         let connection = device?.connectionID ?? "unknown.\(sender)"
         let state = states[connection] ?? InputState(); states[connection] = state
         let profile = replayProfile ?? config.profile(for: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
-        let layout = device.map { config.nagaKeyboardLayouts[$0.identity.transport] ?? NagaKeyboardLayout() } ?? NagaKeyboardLayout()
+        let layout = device.map { config.nagaInputLayout(for: $0.identity) } ?? NagaKeyboardLayout()
         var prelude: MousePrelude?
         if allowMousePrelude, device?.identity.canonicalFamily == "razer.naga.pro", !layout.doubleClickPrefixes.isEmpty {
             if type == .leftMouseDown || type == .leftMouseUp {
@@ -383,8 +425,10 @@ final class MouseInterceptor {
         rawKeyboardConnections[id] = device.connectionID
         let state = states[device.connectionID] ?? InputState(); states[device.connectionID] = state
         let layout = config.nagaInputLayout(for: device.identity)
+        let transitions = state.bluetoothReports.route(reportID: reportID, bytes: bytes)
+        guard !transitions.isEmpty else { return }
         let profile = config.profile(for: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
-        for input in state.bluetoothReports.route(reportID: reportID, bytes: bytes) {
+        for input in transitions {
             guard NagaBluetoothReportDecoder.handles(keyCode: input.keyCode, layout: layout),
                   let event = CGEvent(keyboardEventSource: nil, virtualKey: input.keyCode, keyDown: input.phase == .down) else { continue }
             var flags = eventFlags(modifierState.resolve(event: [], hardware: modifierMask(CGEventSource.flagsState(.hidSystemState))).union(heldShortcuts.heldModifiers))

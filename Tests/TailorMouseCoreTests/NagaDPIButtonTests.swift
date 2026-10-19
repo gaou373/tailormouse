@@ -3,11 +3,11 @@ import XCTest
 
 final class NagaDPIButtonTests: XCTestCase {
     private let originals = [NagaDPIButtonBinding(slot: 9, block: [1,1,9,0,0,0,0]), NagaDPIButtonBinding(slot: 10, block: [1,1,10,0,0,0,0])]
-    private var targets: [NagaDPIButtonBinding] { NagaDPIButtonBinding.targets }
+    private var targets: [NagaDPIButtonBinding] { NagaDPIButtonBinding.legacyTargets }
 
-    func testOnlyOriginalUSBAndReceiverCanEnableAliases() {
+    func testRetiredOptInCannotEnableAliasesOnAnyConnection() {
         var config = ProfileConfiguration(); config.remapNagaDPIButtons = true
-        for (product, transport, expected) in [(0x008f,"USB",true),(0x0090,"USB",true),(0x0092,"Bluetooth Low Energy",false),(0x00a8,"USB",false),(0x008f,"Bluetooth",false)] {
+        for (product, transport, expected) in [(0x008f,"USB",false),(0x0090,"USB",false),(0x0092,"Bluetooth Low Energy",false),(0x00a8,"USB",false),(0x008f,"Bluetooth",false)] {
             let identity = DeviceIdentity(vendorID: 0x1532, productID: product, transport: transport, product: "Naga")
             XCTAssertEqual(config.nagaInputLayout(for: identity).button(for: 105), expected ? 112 : nil)
             XCTAssertEqual(config.nagaInputLayout(for: identity).button(for: 107), expected ? 113 : nil)
@@ -34,7 +34,8 @@ final class NagaDPIButtonTests: XCTestCase {
         XCTAssertEqual(active.sequences, original.sequences)
         XCTAssertNil(original.button(for: 105))
         XCTAssertFalse(NagaBluetoothReportDecoder.handles(keyCode: 105, layout: original))
-        XCTAssertTrue(NagaBluetoothReportDecoder.handles(keyCode: 105, layout: active))
+        XCTAssertFalse(NagaBluetoothReportDecoder.handles(keyCode: 105, layout: active))
+        XCTAssertEqual(active, original)
         XCTAssertEqual(original.includingDPIButtons(false), original)
     }
     func testConflictingCalibrationIsRetainedRatherThanReinterpreted() {
@@ -53,7 +54,7 @@ final class NagaDPIButtonTests: XCTestCase {
         XCTAssertFalse(recorder.active)
     }
     func testLiveNormalLayerFramingAndStrictBounds() throws {
-        for target in targets {
+        for target in originals {
             let read = try NagaDPIButtonProtocol.read(slot: target.slot)
             let write = try NagaDPIButtonProtocol.write(target)
             XCTAssertEqual(read.count, 90); XCTAssertEqual(write.count, 90)
@@ -83,33 +84,21 @@ final class NagaDPIButtonTests: XCTestCase {
         XCTAssertThrowsError(try NagaDPIButtonProtocol.parse(response, slot: 9))
         XCTAssertThrowsError(try NagaDPIButtonProtocol.parse(Array(response.dropLast()), slot: 9))
     }
-    func testBackupMustPrecedeAnyWrite() throws {
-        var calls: [String] = []
-        try NagaDPIButtonTransaction.apply(originals: originals, backup: { calls.append("backup") }, write: { calls.append("write:\($0.slot)") })
-        XCTAssertEqual(calls, ["backup","write:9","write:10"])
-        XCTAssertThrowsError(try NagaDPIButtonTransaction.apply(originals: originals, backup: { throw NagaDPIButtonError.recovery }, write: { _ in XCTFail("No write without backup") }))
+    func testPhysicalDPISlotsAreNotWheelSlotsAndCannotBeProgrammed() {
+        XCTAssertEqual(NagaDPIButton.up.slot, 12)
+        XCTAssertEqual(NagaDPIButton.down.slot, 11)
+        XCTAssertFalse(NagaDPIButton.remappingAvailable)
+        for button in NagaDPIButton.allCases {
+            XCTAssertThrowsError(try NagaDPIButtonProtocol.write(.init(slot: button.slot, block: [2,2,0,button.usage,0,0,0])))
+        }
+        // The old wheel-to-F13/F14 assignments can only be recognized for restoration.
+        for target in targets { XCTAssertThrowsError(try NagaDPIButtonProtocol.write(target)) }
     }
-    func testFailedOrPossiblyLandedWriteRollsBackBothSlotsInReverseOrder() {
-        var actual = Dictionary(uniqueKeysWithValues: originals.map { ($0.slot, $0) })
-        var writes: [NagaDPIButtonBinding] = []
-        XCTAssertThrowsError(try NagaDPIButtonTransaction.apply(originals: originals, backup: {}, write: { binding in
-            writes.append(binding); actual[binding.slot] = binding
-            if writes.count == 2 { throw NagaDPIButtonError.readback }
-        }))
-        XCTAssertEqual(writes, targets + originals.reversed())
-        XCTAssertEqual(actual[9], originals[0]); XCTAssertEqual(actual[10], originals[1])
-    }
-    func testFirstWriteFailureAlsoRollsBackAndRecoveryFailureIsDistinct() {
-        var writes: [UInt8] = []
-        XCTAssertThrowsError(try NagaDPIButtonTransaction.apply(originals: originals, backup: {}, write: { binding in
-            writes.append(binding.slot)
-            throw NagaDPIButtonError.readback
-        })) { error in XCTAssertEqual(error as? NagaDPIButtonError, .recovery) }
-        XCTAssertEqual(writes, [9,9])
-    }
-    func testMalformedOrUnjournaledTunnelCannotBeAdopted() {
-        for invalid in [[], [originals[0]], [originals[0], originals[0]], targets, [originals[0], targets[1]]] {
-            XCTAssertThrowsError(try NagaDPIButtonTransaction.apply(originals: invalid, backup: { XCTFail("Invalid original") }, write: { _ in XCTFail("Invalid original") }))
+    func testMalformedRecoveryCannotReadOrWriteHardware() {
+        for invalid in [[], [originals[0]], [originals[0], originals[0]]] {
+            XCTAssertThrowsError(try NagaDPIButtonTransaction.restore(originals: invalid,
+                read: { _ in XCTFail("Invalid recovery must not read"); return self.originals[0] },
+                write: { _ in XCTFail("Invalid recovery must not write") }))
         }
     }
     func testRestoreDoesNotOverwriteAnOutsideChangeAndStillRecoversOtherSlot() {
@@ -135,24 +124,21 @@ final class NagaDPIButtonTests: XCTestCase {
         }, write: { writes.append($0.slot) })) { error in XCTAssertEqual(error as? NagaDPIButtonError, .recovery) }
         XCTAssertEqual(reads, [10,9]); XCTAssertEqual(writes, [9])
     }
-    func testUSBReportHoldsHaveOneDownAndOneUpDespiteRepeatedSnapshots() {
-        var reports = NagaBluetoothReportDecoder(); var decoder = NagaKeyboardDecoder(); var router = InputRouter()
-        let layout = NagaKeyboardLayout().includingDPIButtons(true)
-        let binding = ActionBinding(action: .shortcut, shortcut: Shortcut(keyCode: 8), shortcutBehavior: .hold)
-        let profile = MouseProfile(bindings: ["112":binding, "113":binding])
-        var emissions: [InputEmission] = []; var token: UInt64 = 0
-        for usages: [UInt8] in [[0x68], [0x68], [0x68,0x69], [0x68,0x69], [0x69], []] {
-            let raw: [UInt8] = [0,0] + usages + Array(repeating: 0, count: 6-usages.count)
-            let canonical = NagaKeyboardReportFormat.usbBoot.canonical(reportID: 0, bytes: raw)!
-            for edge in reports.route(reportID: 6, bytes: canonical) {
-                token += 1
-                let result = decoder.route(NagaKeyboardInput(token: token, keyCode: edge.keyCode, phase: edge.phase, modifiers: [], profile: profile), now: Double(token), layout: layout)
-                for input in result.dispatches { emissions += router.route(button: input.button, phase: input.phase, profile: input.profile).emissions }
+    func testLegacyWheelTunnelCannotDispatchDPIBindingsEvenWithSavedOptIn() {
+        var config = ProfileConfiguration(); config.remapNagaDPIButtons = true
+        let identity = DeviceIdentity(vendorID: 0x1532, productID: 0x0090, transport: "USB", product: "Naga")
+        let layout = config.nagaInputLayout(for: identity)
+        var decoder = NagaKeyboardDecoder()
+        let profile = MouseProfile(bindings: ["112": ActionBinding(action: .copy), "113": ActionBinding(action: .paste)])
+        for keyCode: UInt16 in [105,107] {
+            for phase: ButtonPhase in [.down,.up] {
+                let result = decoder.route(NagaKeyboardInput(token: UInt64(keyCode), keyCode: keyCode,
+                    phase: phase, modifiers: [], profile: profile), now: 0, layout: layout)
+                XCTAssertTrue(result.dispatches.isEmpty)
             }
         }
-        XCTAssertEqual(emissions.map(\.button), [112,113,112,113])
-        XCTAssertEqual(emissions.map(\.phase), [.down,.down,.up,.up])
-        XCTAssertTrue(router.reset().isEmpty)
+        decoder.reset()
+        XCTAssertTrue(decoder.ownedKeys.isEmpty)
     }
     func testHeldDPIShortcutKeepsItsPressMappingAndResetReleasesExactlyOnce() {
         var router = InputRouter()

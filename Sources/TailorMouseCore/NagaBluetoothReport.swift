@@ -27,9 +27,9 @@ public struct NagaBluetoothReportDecoder {
     private var inherited: Set<UInt16> = []
     public init() {}
     public mutating func reset() { held.removeAll(); inherited.removeAll() }
-    public mutating func prime(reportID: UInt32, bytes: [UInt8]) {
+    public mutating func prime(reportID: UInt32, bytes: [UInt8], alreadyOwned: Set<UInt16> = []) {
         guard let snapshot = Self.snapshot(reportID: reportID, bytes: bytes) else { return }
-        held = snapshot.keys; inherited = held
+        held = snapshot.keys; inherited = held.subtracting(alreadyOwned)
     }
     public mutating func route(reportID: UInt32, bytes: [UInt8]) -> [NagaRawKeyTransition] {
         guard let snapshot = Self.snapshot(reportID: reportID, bytes: bytes) else { return [] }

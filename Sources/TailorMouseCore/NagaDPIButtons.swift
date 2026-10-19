@@ -4,9 +4,11 @@ import Foundation
 public enum NagaDPIButton: Int, CaseIterable {
     case up = 112, down = 113
     public var title: String { self == .up ? "DPI Up" : "DPI Down" }
-    public var slot: UInt8 { self == .up ? 9 : 10 }
+    public var slot: UInt8 { self == .up ? 12 : 11 }
     public var usage: UInt8 { self == .up ? 0x68 : 0x69 }
     public var keyCode: UInt16 { self == .up ? 105 : 107 }
+    /// Physical DPI slots are identified, but remapping is not hardware-verified.
+    public static let remappingAvailable = false
     public static func supports(_ identity: DeviceIdentity) -> Bool {
         identity.vendorID == 0x1532 && [0x008f, 0x0090].contains(identity.productID) && identity.transport.lowercased() == "usb"
     }
@@ -20,7 +22,7 @@ public extension NagaKeyboardLayout {
     }
     /// Runtime-only aliases. Do not overwrite the user's side-panel calibration.
     func includingDPIButtons(_ enabled: Bool) -> Self {
-        guard enabled, !hasDPIButtonAliasConflict else { return self }
+        guard NagaDPIButton.remappingAvailable, enabled, !hasDPIButtonAliasConflict else { return self }
         var result = self
         for button in NagaDPIButton.allCases { result.keyOverrides[String(button.keyCode)] = button.rawValue }
         return result
@@ -32,8 +34,9 @@ public struct NagaDPIButtonBinding: Codable, Equatable {
     public let block: [UInt8]
     public init(slot: UInt8, block: [UInt8]) { self.slot = slot; self.block = block }
     public var isValid: Bool { [UInt8(9), 10].contains(slot) && block.count == 7 && block[1] <= 5 }
-    public static var targets: [Self] {
-        NagaDPIButton.allCases.map { Self(slot: $0.slot, block: [2, 2, 0, $0.usage, 0, 0, 0]) }
+    /// Historical 0.4.3/0.4.4 wheel assignments, used only to recognize recovery ownership.
+    public static var legacyTargets: [Self] {
+        [Self(slot: 9, block: [2,2,0,0x68,0,0,0]), Self(slot: 10, block: [2,2,0,0x69,0,0,0])]
     }
 }
 public enum NagaDPIButtonError: Error, LocalizedError {
@@ -49,7 +52,8 @@ public enum NagaDPIButtonError: Error, LocalizedError {
 }
 
 /// Original framing based on OpenSnek's published Naga USB protocol. Only the
-/// normal live layer (bank 0) and two observed body slots may be addressed.
+/// normal live layer (bank 0) and legacy wheel slots may be addressed for recovery.
+/// This is not a physical DPI-button programming API.
 public enum NagaDPIButtonProtocol {
     public static func checksum(_ bytes: [UInt8]) -> UInt8 { bytes[2..<88].reduce(0, ^) }
     public static func read(slot: UInt8) throws -> [UInt8] {
@@ -57,7 +61,7 @@ public enum NagaDPIButtonProtocol {
         return packet(command: 0x8c, arguments: [0, slot, 0, 0, 0, 0, 0, 0, 0, 0])
     }
     public static func write(_ binding: NagaDPIButtonBinding) throws -> [UInt8] {
-        guard binding.isValid else { throw NagaDPIButtonError.invalid }
+        guard binding.isValid, !NagaDPIButtonBinding.legacyTargets.contains(binding) else { throw NagaDPIButtonError.invalid }
         return packet(command: 0x0c, arguments: [0, binding.slot, 0] + binding.block)
     }
     private static func packet(command: UInt8, arguments: [UInt8]) -> [UInt8] {
@@ -83,28 +87,6 @@ public enum NagaDPIButtonTransaction {
     public static func validOriginals(_ originals: [NagaDPIButtonBinding]) -> Bool {
         originals.count == 2 && Set(originals.map(\.slot)) == [9, 10] && originals.allSatisfy(\.isValid)
     }
-    public static func apply(originals: [NagaDPIButtonBinding], backup: () throws -> Void,
-                             write: (NagaDPIButtonBinding) throws -> Void) throws {
-        guard validOriginals(originals) else { throw NagaDPIButtonError.invalid }
-        // A pre-existing tunnel without its original journal cannot safely be adopted.
-        guard originals.allSatisfy({ original in !NagaDPIButtonBinding.targets.contains(original) }) else { throw NagaDPIButtonError.recovery }
-        try backup()
-        var attempted: [UInt8] = []
-        do {
-            for target in NagaDPIButtonBinding.targets {
-                attempted.append(target.slot)
-                try write(target)
-            }
-        } catch {
-            let originalError = error
-            var failed = false
-            for slot in attempted.reversed() {
-                do { try write(originals.first { $0.slot == slot }!) } catch { failed = true }
-            }
-            if failed { throw NagaDPIButtonError.recovery }
-            throw originalError
-        }
-    }
     public static func restore(originals: [NagaDPIButtonBinding], read: (UInt8) throws -> NagaDPIButtonBinding,
                                write: (NagaDPIButtonBinding) throws -> Void) throws {
         guard validOriginals(originals) else { throw NagaDPIButtonError.invalid }
@@ -113,7 +95,7 @@ public enum NagaDPIButtonTransaction {
             do {
                 let current = try read(original.slot)
                 if current == original { continue }
-                guard NagaDPIButtonBinding.targets.contains(current) else { conflict = true; continue }
+                guard NagaDPIButtonBinding.legacyTargets.contains(current) else { conflict = true; continue }
                 try write(original)
             } catch { failed = true }
         }

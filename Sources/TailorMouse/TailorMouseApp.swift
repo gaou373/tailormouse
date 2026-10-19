@@ -297,7 +297,8 @@ private struct ButtonsView: View {
                                 }.padding(.horizontal, 8).frame(height: 23)
                                     .frame(maxWidth: .infinity).background(CompactTheme.control, in: RoundedRectangle(cornerRadius: 5))
                                     .overlay(RoundedRectangle(cornerRadius: 5).stroke(indicators.detectedButton == button ? CompactTheme.accent : .clear, lineWidth: 2))
-                            }.buttonStyle(.plain).help("Edit \(compactButtonTitle(button))")
+                            }.buttonStyle(.plain).disabled(NagaDPIButton(rawValue: button) != nil)
+                                .help(NagaDPIButton(rawValue: button) != nil ? "DPI remapping is unavailable pending hardware verification." : "Edit \(compactButtonTitle(button))")
                         }
                     }
                 }
@@ -328,8 +329,8 @@ private struct ButtonsView: View {
                 Text(indicators.detectedButton.map(compactButtonTitle) ?? indicators.inspectionMessage)
                     .font(.system(size: 10)).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true).foregroundStyle(.secondary)
                 Toggle("Remap DPI buttons", isOn: $dpiEnabled).toggleStyle(.checkbox).font(.system(size: 11))
-                    .disabled(running || dpiButtons.busy)
-                    .help("Enable while stopped. DPI buttons use your mappings while Running; Stop restores their original assignments.")
+                    .disabled(true)
+                    .help("Unavailable while physical DPI-button remapping is being verified. Scroll-wheel assignments are preserved.")
                 Button("DPI setup…") { showDPISetup = true }.controlSize(.mini)
                     .popover(isPresented: $showDPISetup) {
                         DPIButtonSetupView(dpiButtons: dpiButtons, running: running)
@@ -369,11 +370,11 @@ private struct DPIButtonSetupView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("DPI Button Remapping").font(.headline)
-            Text("Enable Remap DPI buttons while stopped, assign DPI Up and DPI Down on the first Buttons page, then press Start.")
-            Text("Original Naga Pro · USB cable or receiver. Bluetooth is not supported yet. Only live button assignments change; saved onboard profiles stay unchanged.")
-            Text("Stop or Quit restores the original assignments. Stop before switching connections. After a crash or unplug, reconnect the same mouse and onboard profile and use Restore DPI Buttons.")
+            Text("DPI-button remapping is temporarily unavailable. The previous implementation incorrectly addressed the scroll wheel.")
+            Text("The physical DPI buttons require separate hardware verification before remapping can be enabled.")
+            Text("If an older version changed scrolling, stop handling, reconnect the same mouse and onboard profile, then restore its wheel assignments below.")
             Text(dpiButtons.message).foregroundStyle(.secondary)
-            Button("Restore DPI Buttons", action: dpiButtons.restoreWhileStopped).disabled(running || dpiButtons.busy)
+            Button("Restore Wheel Assignments", action: dpiButtons.restoreWhileStopped).disabled(running || dpiButtons.busy)
         }.font(.callout).padding(18).frame(width: 330).fixedSize(horizontal: false, vertical: true)
     }
 }
