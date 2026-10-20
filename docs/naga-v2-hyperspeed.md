@@ -74,6 +74,8 @@ claiming the mouse is fixed. Builds and automated tests never start remapping.
 ## User feedback
 
 The user confirmed that bindings appear to work on the HyperSpeed trial.
-Modifier-only Command on Side Button 1 is still under investigation; its saved
-binding is correct and runtime reports paired side-button transitions. Full
-twelve-button and reconnect acceptance remain unverified.
+The user also confirmed that Side Button 1 held as Command works with C.
+Command+Space inside Premiere remains unresolved; the expected action and
+keyboard-only comparison are pending. macOS Spotlight hotkeys 64/65 were
+disabled during local inspection. Full twelve-button and reconnect acceptance
+remain unverified.
