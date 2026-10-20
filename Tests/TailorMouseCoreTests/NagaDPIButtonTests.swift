@@ -85,8 +85,8 @@ final class NagaDPIButtonTests: XCTestCase {
         XCTAssertThrowsError(try NagaDPIButtonProtocol.parse(Array(response.dropLast()), slot: 9))
     }
     func testOnlyPhysicalDPITargetsCanBeProgrammedAndLegacyWheelTunnelsStayForbidden() {
-        XCTAssertEqual(NagaDPIButton.up.slot, 12)
-        XCTAssertEqual(NagaDPIButton.down.slot, 11)
+        XCTAssertEqual(NagaDPIButton.up.slot, 11)
+        XCTAssertEqual(NagaDPIButton.down.slot, 12)
         XCTAssertTrue(NagaDPIButton.remappingAvailable)
         for button in NagaDPIButton.allCases {
             let packet = try! NagaDPIButtonProtocol.write(.init(slot: button.slot, block: [2,2,0,button.usage,0,0,0]))

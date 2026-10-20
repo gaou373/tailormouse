@@ -73,8 +73,7 @@ private final class NagaDPIButtonSession {
         try send(request)
         for _ in 0..<6 {
             usleep(35_000)
-            if let b = get(), b[0] == 2, b[1] == 0x1f, b[6] == 5, b[7] == 0x84,
-               b[88] == NagaDPIButtonProtocol.checksum(b), b[89] == 0, (1...5).contains(b[8]) { return b[8] }
+            if let bytes = get(), let profile = try NagaDPIButtonProtocol.activeProfileReply(bytes, product: product) { return profile }
         }
         throw Self.error("The active Naga onboard profile could not be verified.")
     }
@@ -106,9 +105,10 @@ final class NagaDPIButtons: ObservableObject {
     private struct Journal: Codable {
         let product: Int; let location: Int; let serial: String; let profile: UInt8
         let originals: [NagaDPIButtonBinding]
+        let mappingVersion: Int?
         func matches(_ session: NagaDPIButtonSession) -> Bool {
             product == session.product && location == session.location && serial == session.serial &&
-            (1...5).contains(profile) && NagaDPIButtonTransaction.validOriginals(originals)
+            (1...5).contains(profile) && [1,2].contains(mappingVersion ?? 1) && NagaDPIButtonTransaction.validOriginals(originals)
         }
     }
     private struct Lease { let session: NagaDPIButtonSession; let journal: Journal; let url: URL }
@@ -125,7 +125,7 @@ final class NagaDPIButtons: ObservableObject {
     }
     private func recover(_ session: NagaDPIButtonSession, journal: Journal, url: URL) throws {
         guard journal.matches(session), try session.activeProfile() == journal.profile else { throw NagaDPIButtonError.recovery }
-        try NagaDPIButtonTransaction.restore(originals: journal.originals, read: session.read, write: { try session.write($0, profile: journal.profile) })
+        try NagaDPIButtonTransaction.restore(originals: journal.originals, physicalMappingVersion: journal.mappingVersion ?? 1, read: session.read, write: { try session.write($0, profile: journal.profile) })
         try FileManager.default.removeItem(at: url)
     }
     private func recoverExisting(_ session: NagaDPIButtonSession) throws {
@@ -139,7 +139,7 @@ final class NagaDPIButtons: ObservableObject {
         try recoverExisting(session)
         let profile = try session.activeProfile()
         let originals = try NagaDPIButton.allCases.map { try session.read($0.slot) }
-        let journal = Journal(product: session.product, location: session.location, serial: session.serial, profile: profile, originals: originals)
+        let journal = Journal(product: session.product, location: session.location, serial: session.serial, profile: profile, originals: originals, mappingVersion: 2)
         let url = journalURL(session)
         do {
             try NagaDPIButtonTransaction.apply(originals: originals, backup: {
@@ -178,12 +178,24 @@ final class NagaDPIButtons: ObservableObject {
                 // An unplug leaves the durable recovery record for the next
                 // connection; never send a restore to another interface.
                 self.leases = self.leases.filter { present.contains($0.key) }
+                var waitingReceivers = 0
                 for session in sessions {
                     if let lease = self.leases[session.registryID] {
                         guard try session.activeProfile() == lease.journal.profile else { throw NagaDPIButtonError.recovery }
-                    } else { self.leases[session.registryID] = try self.prepare(session) }
+                    } else {
+                        // A cabled mouse can leave its plugged-in receiver offline.
+                        // Never suppress failures on an already-owned lease.
+                        do { _ = try session.activeProfile() }
+                        catch NagaDPIButtonError.receiverUnavailable { waitingReceivers += 1; continue }
+                        self.leases[session.registryID] = try self.prepare(session)
+                    }
                 }
-                let message = sessions.isEmpty ? "Connect a Naga Pro by USB cable or receiver. Bluetooth DPI-button remapping is unavailable." : "DPI Up and DPI Down are ready. Stop restores the original live assignments."
+                let message: String
+                if self.leases.isEmpty {
+                    message = waitingReceivers > 0 ? "Receiver connected; waiting for its mouse. DPI mappings will resume when it reconnects." : "Connect a Naga Pro by USB cable or receiver. Bluetooth DPI-button remapping is unavailable."
+                } else {
+                    message = "DPI Up and DPI Down are ready. Stop restores the original assignments." + (waitingReceivers > 0 ? " The idle receiver is waiting for its mouse." : "")
+                }
                 DispatchQueue.main.async { [weak self] in
                     guard let self, self.generation == token else { return }
                     self.busy = false; self.message = message
@@ -210,7 +222,7 @@ final class NagaDPIButtons: ObservableObject {
         }
         busy = false
         let pending = ((try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []).contains { $0.hasSuffix(".json") }
-        if failure == nil && pending { failure = "Button recovery is pending. Reconnect the same mouse/profile and choose Restore Wheel Assignments." }
+        if failure == nil && pending { failure = "Button recovery is pending. Reconnect the same mouse/profile and choose Restore Button Assignments." }
         message = failure ?? "Stopped. Original button assignments restored for connected mice."
         return failure
     }

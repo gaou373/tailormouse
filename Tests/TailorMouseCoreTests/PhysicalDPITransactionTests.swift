@@ -2,11 +2,11 @@ import XCTest
 @testable import TailorMouseCore
 
 final class PhysicalDPITransactionTests: XCTestCase {
-    private let originals = [NagaDPIButtonBinding(slot: 12, block: [6,1,2,0,0,0,0]), NagaDPIButtonBinding(slot: 11, block: [6,1,1,0,0,0,0])]
+    private let originals = [NagaDPIButtonBinding(slot: 11, block: [6,1,1,0,0,0,0]), NagaDPIButtonBinding(slot: 12, block: [6,1,2,0,0,0,0])]
     func testBackupPrecedesOnlyPhysicalSlotWrites() throws {
         var calls = [String]()
         try NagaDPIButtonTransaction.apply(originals: originals, backup: { calls.append("backup") }, write: { calls.append("write:\($0.slot)") })
-        XCTAssertEqual(calls, ["backup","write:12","write:11"])
+        XCTAssertEqual(calls, ["backup","write:11","write:12"])
         XCTAssertThrowsError(try NagaDPIButtonTransaction.apply(originals: originals, backup: { throw NagaDPIButtonError.recovery }, write: { _ in XCTFail("No write before backup") }))
     }
     func testLandedFailureRollsBackEveryAttemptedSlotInReverseOrder() {
@@ -17,24 +17,82 @@ final class PhysicalDPITransactionTests: XCTestCase {
             if writes.count == 2 { throw NagaDPIButtonError.readback }
         }))
         XCTAssertEqual(writes, NagaDPIButtonBinding.targets + originals.reversed())
-        XCTAssertEqual(actual[12], originals[0]); XCTAssertEqual(actual[11], originals[1])
+        XCTAssertEqual(actual[11], originals[0]); XCTAssertEqual(actual[12], originals[1])
     }
     func testRecoveryFailureRetainsARecoverableErrorAndRejectsUnjournaledTunnels() {
         var writes = [UInt8]()
         XCTAssertThrowsError(try NagaDPIButtonTransaction.apply(originals: originals, backup: {}, write: { b in
             writes.append(b.slot); throw NagaDPIButtonError.readback
         })) { XCTAssertEqual($0 as? NagaDPIButtonError, .recovery) }
-        XCTAssertEqual(writes, [12,12])
-        for invalid in [[], [originals[0]], [originals[0], originals[0]], NagaDPIButtonBinding.targets,
+        XCTAssertEqual(writes, [11,11])
+        for invalid in [[], [originals[0]], [originals[0], originals[0]], NagaDPIButtonBinding.targets, NagaDPIButtonBinding.previousPhysicalTargets,
                         [NagaDPIButtonBinding(slot: 9, block: [1,1,9,0,0,0,0]), NagaDPIButtonBinding(slot: 10, block: [1,1,10,0,0,0,0])]] {
             XCTAssertThrowsError(try NagaDPIButtonTransaction.apply(originals: invalid, backup: { XCTFail("No backup for invalid apply") }, write: { _ in XCTFail("No invalid write") }))
         }
     }
     func testPhysicalRestorePreservesExternalChangesAndAttemptsOtherSlot() {
-        let external = NagaDPIButtonBinding(slot: 12, block: [2,2,0,0x1e,0,0,0])
-        var actual = [UInt8(12):external, 11:NagaDPIButtonBinding.targets[1]]
+        let external = NagaDPIButtonBinding(slot: 11, block: [2,2,0,0x1e,0,0,0])
+        var actual = [UInt8(11):external, 12:NagaDPIButtonBinding.targets[1]]
         XCTAssertThrowsError(try NagaDPIButtonTransaction.restore(originals: originals, read: { actual[$0]! }, write: { actual[$0.slot] = $0 })) { XCTAssertEqual($0 as? NagaDPIButtonError, .conflict) }
-        XCTAssertEqual(actual[12], external); XCTAssertEqual(actual[11], originals[1])
+        XCTAssertEqual(actual[11], external); XCTAssertEqual(actual[12], originals[1])
+    }
+    func testPreviousDirectionLeaseRestoresBeforeCorrectedAssignmentsAreApplied() throws {
+        var actual = Dictionary(uniqueKeysWithValues: NagaDPIButtonBinding.previousPhysicalTargets.map { ($0.slot,$0) })
+        var writes = [NagaDPIButtonBinding]()
+        try NagaDPIButtonTransaction.restore(originals: originals, physicalMappingVersion: 1, read: { actual[$0]! }, write: { actual[$0.slot] = $0; writes.append($0) })
+        XCTAssertEqual(actual[11], originals[0]); XCTAssertEqual(actual[12], originals[1])
+        XCTAssertEqual(writes.count, 2)
+        try NagaDPIButtonTransaction.apply(originals: originals, backup: {}, write: { actual[$0.slot] = $0 })
+        XCTAssertEqual(actual[11]?.block, [2,2,0,0x68,0,0,0])
+        XCTAssertEqual(actual[12]?.block, [2,2,0,0x69,0,0,0])
+    }
+    func testNewJournalDoesNotMistakeAnExternalOppositeAliasForItsOwnWrite() {
+        var actual = Dictionary(uniqueKeysWithValues: NagaDPIButtonBinding.previousPhysicalTargets.map { ($0.slot,$0) })
+        var writes = [UInt8]()
+        XCTAssertThrowsError(try NagaDPIButtonTransaction.restore(originals: originals, physicalMappingVersion: 2,
+            read: { actual[$0]! }, write: { actual[$0.slot] = $0; writes.append($0.slot) })) {
+            XCTAssertEqual($0 as? NagaDPIButtonError, .conflict)
+        }
+        XCTAssertTrue(writes.isEmpty)
+        XCTAssertThrowsError(try NagaDPIButtonTransaction.restore(originals: originals, physicalMappingVersion: 99,
+            read: { _ in XCTFail("Unknown journal version must not read"); return self.originals[0] }, write: { _ in XCTFail("Unknown journal version must not write") }))
+    }
+    func testCorrectedPhysicalSlotsKeepDistinctSavedActionsAndMatchedEdges() {
+        let up = ActionBinding(action: .modifierKey, modifierKey: .command)
+        let down = ActionBinding(action: .modifierKey, modifierKey: .option)
+        let profile = MouseProfile(bindings: ["112":up,"113":down])
+        let layout = NagaKeyboardLayout().includingDPIButtons(true)
+        for (slot, usage, keyCode, logical, binding): (UInt8,UInt8,UInt16,Int,ActionBinding) in [(11,0x68,105,112,up),(12,0x69,107,113,down)] {
+            XCTAssertEqual(NagaDPIButtonBinding.targets.first { $0.slot == slot }?.block, [2,2,0,usage,0,0,0])
+            XCTAssertEqual(layout.button(for: keyCode), logical)
+            var router = InputRouter()
+            XCTAssertEqual(router.route(button: logical, phase: .down, profile: profile).emissions, [InputEmission(button: logical, binding: binding, phase: .down)])
+            XCTAssertTrue(router.route(button: logical, phase: .down, profile: profile).emissions.isEmpty)
+            XCTAssertEqual(router.route(button: logical, phase: .up, profile: MouseProfile()).emissions, [InputEmission(button: logical, binding: binding, phase: .up)])
+            XCTAssertTrue(router.reset().isEmpty)
+        }
+    }
+    private func profileReply(status: UInt8, profile: UInt8 = 1) -> [UInt8] {
+        var bytes = [UInt8](repeating: 0, count: 90)
+        bytes[0] = status; bytes[1] = 0x1f; bytes[6] = 5; bytes[7] = 0x84; bytes[8] = profile
+        bytes[88] = NagaDPIButtonProtocol.checksum(bytes); return bytes
+    }
+    func testOnlyExplicitReceiverTimeoutCanWaitWithoutProgramming() throws {
+        let timeout = profileReply(status: 4)
+        XCTAssertThrowsError(try NagaDPIButtonProtocol.activeProfileReply(timeout, product: 0x0090)) { XCTAssertEqual($0 as? NagaDPIButtonError, .receiverUnavailable) }
+        XCTAssertNil(try NagaDPIButtonProtocol.activeProfileReply(timeout, product: 0x008f))
+        for status: UInt8 in [0,1,3,5] { XCTAssertNil(try NagaDPIButtonProtocol.activeProfileReply(profileReply(status: status), product: 0x0090)) }
+        XCTAssertEqual(try NagaDPIButtonProtocol.activeProfileReply(profileReply(status: 2), product: 0x0090), 1)
+        XCTAssertNil(try NagaDPIButtonProtocol.activeProfileReply(profileReply(status: 2, profile: 0), product: 0x0090))
+    }
+    func testUnrelatedOrCorruptReplyCannotBeMisclassifiedAsReceiverTimeout() throws {
+        let valid = profileReply(status: 4)
+        for index in [1,6,7,88,89] {
+            var bytes = valid; bytes[index] ^= 1
+            if index != 88 { bytes[88] = NagaDPIButtonProtocol.checksum(bytes) }
+            XCTAssertNil(try NagaDPIButtonProtocol.activeProfileReply(bytes, product: 0x0090))
+        }
+        XCTAssertNil(try NagaDPIButtonProtocol.activeProfileReply(Array(valid.dropLast()), product: 0x0090))
     }
     func testPhysicalHeldAliasesHaveMatchedReleaseAndResetWithoutRepeats() {
         var reports = NagaBluetoothReportDecoder(); var decoder = NagaKeyboardDecoder(); var router = InputRouter()

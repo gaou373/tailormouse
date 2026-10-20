@@ -4,7 +4,7 @@ import Foundation
 public enum NagaDPIButton: Int, CaseIterable {
     case up = 112, down = 113
     public var title: String { self == .up ? "DPI Up" : "DPI Down" }
-    public var slot: UInt8 { self == .up ? 12 : 11 }
+    public var slot: UInt8 { self == .up ? 11 : 12 }
     public var usage: UInt8 { self == .up ? 0x68 : 0x69 }
     public var keyCode: UInt16 { self == .up ? 105 : 107 }
     /// Original-Naga physical slot writes/readbacks are verified; Bluetooth is excluded.
@@ -38,19 +38,24 @@ public struct NagaDPIButtonBinding: Codable, Equatable {
     public static var targets: [Self] {
         NagaDPIButton.allCases.map { Self(slot: $0.slot, block: [2,2,0,$0.usage,0,0,0]) }
     }
+    /// 0.4.6 had the physical directions reversed. Recognize its leases for recovery only.
+    public static var previousPhysicalTargets: [Self] {
+        [Self(slot: 12, block: [2,2,0,0x68,0,0,0]), Self(slot: 11, block: [2,2,0,0x69,0,0,0])]
+    }
     /// Historical 0.4.3/0.4.4 wheel assignments, used only to recognize recovery ownership.
     public static var legacyTargets: [Self] {
         [Self(slot: 9, block: [2,2,0,0x68,0,0,0]), Self(slot: 10, block: [2,2,0,0x69,0,0,0])]
     }
 }
 public enum NagaDPIButtonError: Error, LocalizedError {
-    case invalid, readback, conflict, recovery
+    case invalid, readback, conflict, recovery, receiverUnavailable
     public var errorDescription: String? {
         switch self {
+        case .receiverUnavailable: return "The receiver is connected, but its mouse is unavailable."
         case .invalid: return "Invalid DPI-button request or response."
         case .readback: return "DPI-button assignment did not match its readback."
         case .conflict: return "DPI-button assignments changed outside TailorMouse. They were left untouched; the recovery backup is retained."
-        case .recovery: return "DPI-button recovery is incomplete. Reconnect the same mouse and use Restore DPI Buttons before remapping again."
+        case .recovery: return "DPI-button recovery is incomplete. Reconnect the same mouse and use Restore Button Assignments before remapping again."
         }
     }
 }
@@ -59,6 +64,14 @@ public enum NagaDPIButtonError: Error, LocalizedError {
 /// normal live layer (bank 0) and physical DPI slots may be programmed.
 /// Legacy wheel slots remain accessible for ownership-checked recovery only.
 public enum NagaDPIButtonProtocol {
+    /// An explicit receiver timeout is distinct from malformed/unsupported replies.
+    public static func activeProfileReply(_ bytes: [UInt8], product: Int) throws -> UInt8? {
+        guard bytes.count == 90, bytes[1] == 0x1f, bytes[6] == 5, bytes[7] == 0x84,
+              bytes[88] == checksum(bytes), bytes[89] == 0 else { return nil }
+        if product == 0x0090 && bytes[0] == 4 { throw NagaDPIButtonError.receiverUnavailable }
+        guard bytes[0] == 2, (1...5).contains(bytes[8]) else { return nil }
+        return bytes[8]
+    }
     public static func checksum(_ bytes: [UInt8]) -> UInt8 { bytes[2..<88].reduce(0, ^) }
     public static func read(slot: UInt8) throws -> [UInt8] {
         guard [UInt8(9), 10, 11, 12].contains(slot) else { throw NagaDPIButtonError.invalid }
@@ -94,7 +107,7 @@ public enum NagaDPIButtonTransaction {
     public static func apply(originals: [NagaDPIButtonBinding], backup: () throws -> Void,
                              write: (NagaDPIButtonBinding) throws -> Void) throws {
         guard validOriginals(originals), Set(originals.map(\.slot)) == [11,12] else { throw NagaDPIButtonError.invalid }
-        guard originals.allSatisfy({ !NagaDPIButtonBinding.targets.contains($0) }) else { throw NagaDPIButtonError.recovery }
+        guard originals.allSatisfy({ !(NagaDPIButtonBinding.targets + NagaDPIButtonBinding.previousPhysicalTargets).contains($0) }) else { throw NagaDPIButtonError.recovery }
         try backup()
         var attempted: [UInt8] = []
         do {
@@ -111,15 +124,17 @@ public enum NagaDPIButtonTransaction {
             throw originalError
         }
     }
-    public static func restore(originals: [NagaDPIButtonBinding], read: (UInt8) throws -> NagaDPIButtonBinding,
+    public static func restore(originals: [NagaDPIButtonBinding], physicalMappingVersion: Int = 2, read: (UInt8) throws -> NagaDPIButtonBinding,
                                write: (NagaDPIButtonBinding) throws -> Void) throws {
-        guard validOriginals(originals) else { throw NagaDPIButtonError.invalid }
+        guard validOriginals(originals), [1,2].contains(physicalMappingVersion) else { throw NagaDPIButtonError.invalid }
+        let expected = Set(originals.map(\.slot)) == [9,10] ? NagaDPIButtonBinding.legacyTargets :
+            (physicalMappingVersion == 1 ? NagaDPIButtonBinding.previousPhysicalTargets : NagaDPIButtonBinding.targets)
         var conflict = false; var failed = false
         for original in originals.reversed() {
             do {
                 let current = try read(original.slot)
                 if current == original { continue }
-                guard (NagaDPIButtonBinding.targets + NagaDPIButtonBinding.legacyTargets).contains(current) else { conflict = true; continue }
+                guard expected.contains(current) else { conflict = true; continue }
                 try write(original)
             } catch { failed = true }
         }
