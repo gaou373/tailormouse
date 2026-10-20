@@ -129,6 +129,7 @@ final class MouseInterceptor {
         nagaInput.report = { [weak self] id, reportID, bytes in self?.handleRawKeyboard(id, reportID: reportID, bytes: bytes) }
         nagaInput.baseline = { [weak self] id, bytes in
             guard let self, let device = self.devices().first(where: { $0.id == id }) ?? self.nagaInput.identity(id) else { return }
+            self.rawKeyboardDevices[id] = device
             let state = self.states[device.connectionID] ?? InputState()
             self.states[device.connectionID] = state
             state.bluetoothReports.prime(reportID: 6, bytes: bytes, alreadyOwned: state.keyboard.ownedKeys, sourceID: id)
@@ -137,7 +138,12 @@ final class MouseInterceptor {
             guard let self else { return }
             // The catalog may already have refreshed; connection IDs are
             // retained independently for exact endpoint removal.
-            if let connection = self.rawKeyboardConnections.removeValue(forKey: id), let state = self.states.removeValue(forKey: connection) {
+            guard let device = self.rawKeyboardDevices.removeValue(forKey: id),
+                  let state = self.states[device.connectionID] else { return }
+            let transitions = state.bluetoothReports.removeSource(id)
+            self.processRawKeyboard(transitions, device: device, state: state)
+            if !self.rawKeyboardDevices.values.contains(where: { $0.connectionID == device.connectionID }) {
+                self.states.removeValue(forKey: device.connectionID)
                 self.releaseRawPassthrough(state)
             }
         }
@@ -168,7 +174,7 @@ final class MouseInterceptor {
         timer?.invalidate(); timer = nil
         shortcutRepeatWork?.cancel(); shortcutRepeatWork = nil
         for event in heldShortcuts.releaseAll() { postHeldShortcut(event) }
-        nagaInput.stop(); rawKeyboardConnections.removeAll()
+        nagaInput.stop(); rawKeyboardDevices.removeAll()
         for state in states.values { releaseRawPassthrough(state) }
         keyboardBridge.stop()
         modifierState.reset()
@@ -425,17 +431,22 @@ final class MouseInterceptor {
         state.keyboardPreludes = state.keyboardPreludes.filter { retained.contains($0.key) }
     }
 
-    private var rawKeyboardConnections: [UInt64: String] = [:]
+    private var rawKeyboardDevices: [UInt64: DeviceEndpoint] = [:]
     private func handleRawKeyboard(_ id: UInt64, reportID: UInt32, bytes: [UInt8]) {
         guard tap != nil, let device = devices().first(where: { $0.id == id }) ?? nagaInput.identity(id),
               device.identity.supportsNagaKeyboard else { return }
         let config = configuration()
         guard config.selectedDeviceFamily == nil || config.selectedDeviceFamily == device.identity.canonicalFamily else { return }
-        rawKeyboardConnections[id] = device.connectionID
+        rawKeyboardDevices[id] = device
         let state = states[device.connectionID] ?? InputState(); states[device.connectionID] = state
-        let layout = config.nagaInputLayout(for: device.identity)
         let transitions = state.bluetoothReports.route(reportID: reportID, bytes: bytes, sourceID: id)
         guard !transitions.isEmpty else { return }
+        processRawKeyboard(transitions, device: device, state: state)
+    }
+    private func processRawKeyboard(_ transitions: [NagaRawKeyTransition], device: DeviceEndpoint, state: InputState) {
+        guard !transitions.isEmpty else { return }
+        let config = configuration()
+        let layout = config.nagaInputLayout(for: device.identity)
         let profile = config.profile(for: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
         for input in transitions {
             guard NagaBluetoothReportDecoder.handles(keyCode: input.keyCode, layout: layout),

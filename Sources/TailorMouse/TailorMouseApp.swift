@@ -1113,7 +1113,7 @@ private struct DevicesView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         ForEach(model.configuration.nagaKeyboardLayouts.keys.sorted(), id: \.self) { transport in
                             HStack {
-                                Text("\(transport) · custom onboard keys")
+                                Text("\(ProfileConfiguration.nagaCalibrationTitle(transport)) · custom onboard keys")
                                 Spacer()
                                 Button("Use standard layout") { model.useStandardNagaLayout(transport: transport) }
                             }

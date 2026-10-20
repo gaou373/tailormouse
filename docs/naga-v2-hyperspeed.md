@@ -113,3 +113,10 @@ Validation adds four native bridge checks using unposted events (press/release,
 Space key identity and physical flag preservation, generated-event exclusion,
 and recovery), alongside the existing 225 core tests and four tracking checks.
 The user confirmed that holding Side Button 1 and pressing keyboard Space now opens Excalibur in Premiere on preview 2. Runtime also confirms Running with both receiver keyboard endpoints open. This closes the reported Excalibur reproduction; all-twelve-button and reconnect acceptance remain unverified.
+
+
+## Review corrections
+
+Hardware calibration is now scoped by canonical mouse family and transport. Legacy transport-only entries remain original-Naga Pro calibrations; HyperSpeed uses its standard layout unless it has a separate family-scoped entry. Shared application actions are unchanged. The calibration UI identifies the model owning each entry.
+
+Every attached baseline is attributed before its first input callback. Interface removal drops that source's snapshot, emits only its unmatched owned releases, and preserves holds still reported by another interface. The connection is reset only after its last raw endpoint leaves. Tests cover baseline-only removal, overlapping owners, a native-to-raw held Command handoff, idempotent removal and mixed-model saved calibrations. All 230 core tests and eight native checks pass.

@@ -33,18 +33,28 @@ public struct NagaBluetoothReportDecoder {
         let previous = held
         snapshots[sourceID] = snapshot.keys
         held = snapshots.values.reduce(into: Set<UInt16>()) { $0.formUnion($1) }
+        inherited.formIntersection(held)
         inherited.formUnion(held.subtracting(previous).subtracting(alreadyOwned))
     }
     public mutating func route(reportID: UInt32, bytes: [UInt8], sourceID: UInt64 = 0) -> [NagaRawKeyTransition] {
         guard let snapshot = Self.snapshot(reportID: reportID, bytes: bytes) else { return [] }
         snapshots[sourceID] = snapshot.keys
         let keys = snapshots.values.reduce(into: Set<UInt16>()) { $0.formUnion($1) }
+        return transitions(to: keys, modifiers: snapshot.modifiers)
+    }
+    /// Drop only the departing interface; surviving owners retain their holds.
+    public mutating func removeSource(_ sourceID: UInt64) -> [NagaRawKeyTransition] {
+        snapshots.removeValue(forKey: sourceID)
+        let keys = snapshots.values.reduce(into: Set<UInt16>()) { $0.formUnion($1) }
+        return transitions(to: keys, modifiers: [])
+    }
+    private mutating func transitions(to keys: Set<UInt16>, modifiers: ModifierMask) -> [NagaRawKeyTransition] {
         let released = held.subtracting(keys)
         let pressed = keys.subtracting(held)
         let output = released.subtracting(inherited).sorted().map {
-            NagaRawKeyTransition(keyCode: $0, phase: .up, modifiers: snapshot.modifiers)
+            NagaRawKeyTransition(keyCode: $0, phase: .up, modifiers: modifiers)
         } + pressed.sorted().map {
-            NagaRawKeyTransition(keyCode: $0, phase: .down, modifiers: snapshot.modifiers)
+            NagaRawKeyTransition(keyCode: $0, phase: .down, modifiers: modifiers)
         }
         inherited.subtract(released); held = keys
         return output
