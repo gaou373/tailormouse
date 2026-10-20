@@ -14,8 +14,8 @@ read -r -a ARCHS <<< "${TAILORMOUSE_ARCHS:-$(uname -m)}"
 BINARIES=()
 for ARCH in "${ARCHS[@]}"; do
     case "$ARCH" in arm64|x86_64) ;; *) printf 'Unsupported architecture: %s\n' "$ARCH" >&2; exit 1 ;; esac
-    xcrun swift build -c release --arch "$ARCH" --scratch-path "$BUILD/swift"
-    BIN_DIR="$(xcrun swift build -c release --arch "$ARCH" --scratch-path "$BUILD/swift" --show-bin-path)"
+    xcrun swift build --build-system native -c release --arch "$ARCH" --scratch-path "$BUILD/swift"
+    BIN_DIR="$(xcrun swift build --build-system native -c release --arch "$ARCH" --scratch-path "$BUILD/swift" --show-bin-path)"
     cp "$BIN_DIR/TailorMouse" "$BUILD/TailorMouse-$ARCH"
     BINARIES+=("$BUILD/TailorMouse-$ARCH")
 done
@@ -40,8 +40,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <key>CFBundleDisplayName</key><string>TailorMouse</string>
 <key>CFBundleExecutable</key><string>TailorMouse</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.4.5</string>
-<key>CFBundleVersion</key><string>31</string>
+<key>CFBundleShortVersionString</key><string>0.4.6-hyperspeed.1</string>
+<key>CFBundleVersion</key><string>32</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>NSHighResolutionCapable</key><true/>

@@ -115,7 +115,8 @@ final class InputIndicators: ObservableObject {
             CGEvent.tapEnable(tap: tap, enable: true)
         }
         rawKeyboard.report = { [weak self] id, reportID, bytes in
-            guard let self, self.family() == nil || self.family() == "razer.naga.pro" else { return }
+            guard let self, let identity = self.rawKeyboard.identity(id)?.identity,
+                  self.family() == nil || self.family() == identity.canonicalFamily else { return }
             var decoder = self.reports[id] ?? NagaBluetoothReportDecoder()
             for edge in decoder.route(reportID: reportID, bytes: bytes) {
                 if let button = NagaKeyMap.button(for: edge.keyCode) {
@@ -131,7 +132,7 @@ final class InputIndicators: ObservableObject {
         }
         rawKeyboard.removed = { [weak self] id in self?.reports.removeValue(forKey: id) }
         rawKeyboard.failed = { [weak self] value in self?.inspectionMessage = value }
-        if family() == nil || family() == "razer.naga.pro" { rawKeyboard.refresh(wait: true) }
+        if DeviceIdentity.supportsNagaKeyboard(family: family()) { rawKeyboard.refresh(family: family(), wait: true) }
     }
     private func observe(_ type: CGEventType, _ event: CGEvent) {
         guard [.leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp, .otherMouseDown, .otherMouseUp, .keyDown, .keyUp, .scrollWheel].contains(type) else { return }
@@ -162,7 +163,7 @@ final class InputIndicators: ObservableObject {
         let phase: ButtonPhase = [.leftMouseUp, .rightMouseUp, .otherMouseUp, .keyUp].contains(type) ? .up : .down
         let button: Int?
         if type == .keyDown || type == .keyUp {
-            guard device.identity.canonicalFamily == "razer.naga.pro", !rawKeyboard.owns(device) else { return }
+            guard device.identity.supportsNagaKeyboard, !rawKeyboard.owns(device) else { return }
             button = NagaKeyMap.button(for: UInt16(clamping: event.getIntegerValueField(.keyboardEventKeycode)))
         } else if type == .leftMouseDown || type == .leftMouseUp { button = 0 }
         else if type == .rightMouseDown || type == .rightMouseUp { button = 1 }

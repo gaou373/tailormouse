@@ -119,18 +119,19 @@ struct ContentView: View {
                 Spacer(minLength: 12)
                 Menu {
                     Button("Razer Naga Pro · every connection") { model.setDeviceFamily("razer.naga.pro") }
+                    Button("Razer Naga V2 HyperSpeed · USB receiver") { model.setDeviceFamily("razer.naga.v2.hyperspeed") }
                     Button("All mice") { model.setDeviceFamily(nil) }
-                    ForEach(Array(Set(catalog.devices.map { $0.identity.canonicalFamily })).filter { $0 != "razer.naga.pro" }.sorted(), id: \.self) { family in
+                    ForEach(Array(Set(catalog.devices.map { $0.identity.canonicalFamily })).filter { $0 != "razer.naga.pro" && $0 != "razer.naga.v2.hyperspeed" }.sorted(), id: \.self) { family in
                         Button(family) { model.setDeviceFamily(family) }
                     }
                 } label: {
                     HStack(spacing: 6) {
                         Circle().fill(catalog.connections.contains { $0.identity.canonicalFamily == model.configuration.selectedDeviceFamily } ? Color.green : Color.gray).frame(width: 7, height: 7)
-                        Text(model.configuration.selectedDeviceFamily == nil ? "All mice" : model.configuration.selectedDeviceFamily == "razer.naga.pro" ? "Naga Pro" : "Selected mouse")
+                        Text(model.configuration.selectedDeviceFamily.map { DeviceIdentity.title(forFamily: $0) } ?? "All mice")
                         Spacer()
                     }.padding(.horizontal, 7).padding(.vertical, 3)
                         .background(CompactTheme.control.opacity(0.55))
-                }.menuStyle(.button).buttonStyle(.plain).frame(width: 205).tint(.white)
+                }.menuStyle(.button).buttonStyle(.plain).frame(width: 245).tint(.white)
             }.controlSize(.small)
             ZStack(alignment: .top) {
                 RoundedRectangle(cornerRadius: 5).fill(CompactTheme.panel)
@@ -460,7 +461,7 @@ private struct SupportView: View {
             Text("TailorMouse").font(.system(size: 20, weight: .semibold))
             Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development")")
                 .foregroundStyle(.secondary)
-            Text("One set of Naga Pro button profiles across USB, Bluetooth and the wireless receiver.")
+            Text("Application profiles for your selected mouse. Naga V2 HyperSpeed support targets the USB receiver.")
             Divider()
             Button("Accessibility & Input Monitoring…", action: model.openPermissions)
             AppUpdateControls(updater: model.updater)
@@ -1073,7 +1074,7 @@ private struct DevicesView: View {
             Picker("Apply profiles to", selection: Binding(get: { model.configuration.selectedDeviceFamily ?? "*" }, set: { model.setDeviceFamily($0 == "*" ? nil : $0) })) {
                 Text("All mice").tag("*")
                 ForEach(families, id: \.self) { family in
-                    Text(family == "razer.naga.pro" ? "Razer Naga Pro · all connections" : family).tag(family)
+                    Text(DeviceIdentity.title(forFamily: family)).tag(family)
                 }
             }
             GroupBox("Connections") {
