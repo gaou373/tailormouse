@@ -112,4 +112,4 @@ releases held output. No Excalibur files or shortcut settings are changed.
 Validation adds four native bridge checks using unposted events (press/release,
 Space key identity and physical flag preservation, generated-event exclusion,
 and recovery), alongside the existing 225 core tests and four tracking checks.
-Excalibur acceptance still requires the user's physical hold-plus-Space test.
+The user confirmed that holding Side Button 1 and pressing keyboard Space now opens Excalibur in Premiere on preview 2. Runtime also confirms Running with both receiver keyboard endpoints open. This closes the reported Excalibur reproduction; all-twelve-button and reconnect acceptance remain unverified.
