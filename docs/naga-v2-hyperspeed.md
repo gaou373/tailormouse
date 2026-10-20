@@ -63,5 +63,10 @@ To test the preview:
    and releasing one. Check the Support diagnostics for paired down/up counts.
 5. Stop, reconnect the receiver, and Start again; verify there are no stuck keys.
 
+The preview was installed locally with the HyperSpeed family selected. After
+the user refreshed permissions and pressed Start, the diagnostic snapshot
+reported Running with two raw keyboard endpoints open. No side-button edges
+had been observed at that point.
+
 Physical input and reconnect acceptance must be confirmed by the user before
 claiming the mouse is fixed. Builds and automated tests never start remapping.
