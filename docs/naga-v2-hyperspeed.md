@@ -79,3 +79,37 @@ Command+Space inside Premiere remains unresolved; the expected action and
 keyboard-only comparison are pending. macOS Spotlight hotkeys 64/65 were
 disabled during local inspection. Full twelve-button and reconnect acceptance
 remain unverified.
+
+## Preview 2: held modifiers and Excalibur
+
+The user confirmed keyboard Command+Space opens Excalibur, while Side Button 1
+held as Command plus keyboard Space did not. Mouse Command+C did work.
+
+Static inspection of the installed shared Spell Book helper (`spell_mac`,
+SHA-256 `5bc302eecfb77c1eec45f37a1e6b5220bb216e39b167b7fdd9fb5377b5afe1bf`)
+shows imports for `CGEventTapCreate` and `CGEventGetFlags` (REA Evidence
+`ev_e291baf2146744992725807149ddbd78b2d111234fb85bc4c300c2f22de45353`).
+Independent arm64 disassembly at `0x1000043c0`–`0x1000043d4` passes location 1,
+placement 0, options 0 and mask `0x400` to `CGEventTapCreate`: a session-stage,
+head-insert active key-down listener. Its callback path reads the key code and
+event flags at `0x10000515c`–`0x10000520c`. This is static evidence, not a live
+trace of callback ordering. Raw disassembly remains ignored locally.
+
+The Excalibur JavaScript graph was partial and a literal `spellcast` trace had
+no matches; that negative result does not establish feature absence (REA
+Evidence `ev_e9ad517b90c8e38e8d6c9e005614e0726ae205032f9044c59a30cf0267512982`,
+`ev_ccc75865a3e3bdc5b78665c60e19a63a2a33d93db5719dab85eb0e4a8625535d`).
+
+TailorMouse previously composed held modifiers only at its session-stage tap.
+Competing session taps therefore expose a possible ordering dependency. Preview
+`0.4.6-hyperspeed.2` adds a narrowly scoped HID-stage keyboard bridge that unions
+held modifiers into the original key-down and key-up events before session
+listeners. It neither records nor reposts keys. Mouse routing stays at the
+session stage. Generated TailorMouse events are excluded, physical flags are
+preserved, Stop removes the bridge, and tap disablement stops handling and
+releases held output. No Excalibur files or shortcut settings are changed.
+
+Validation adds four native bridge checks using unposted events (press/release,
+Space key identity and physical flag preservation, generated-event exclusion,
+and recovery), alongside the existing 225 core tests and four tracking checks.
+Excalibur acceptance still requires the user's physical hold-plus-Space test.

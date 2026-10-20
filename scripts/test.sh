@@ -13,3 +13,8 @@ xcrun swiftc -parse-as-library -I "$BIN_DIR/Modules" -I "$BIN_DIR/NativeHIDBridg
     "$BIN_DIR/TailorMouseCore.build/"*.swift.o "$BIN_DIR/NativeHIDBridge.build/"*.o \
     -o .local/build/TrackingWorkerChecks
 .local/build/TrackingWorkerChecks
+# Exercise the actual native pre-session keyboard transformation without taps.
+xcrun swiftc -parse-as-library -I "$BIN_DIR/Modules" \
+    Sources/TailorMouse/KeyboardModifierBridge.swift scripts/test-keyboard-modifier-bridge.swift \
+    "$BIN_DIR/TailorMouseCore.build/"*.swift.o -o .local/build/KeyboardModifierBridgeChecks
+.local/build/KeyboardModifierBridgeChecks

@@ -16,6 +16,7 @@ final class MouseInterceptor {
     private var competingManagers: Set<Int32> = []
     private var requestedAccessibilityApproval = false
     private var heldShortcuts = HeldShortcuts()
+    private lazy var keyboardBridge = KeyboardModifierBridge(generatedTag: generatedTag)
     private var shortcutRepeatWork: DispatchWorkItem?
     private var modifierState = NagaModifierState()
     private let nagaInput = NagaKeyboardHIDInput()
@@ -103,6 +104,13 @@ final class MouseInterceptor {
         modifierState.begin(snapshot: keyboardModifiers().union(modifierMask(CGEventSource.flagsState(.hidSystemState))))
         CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: newTap, enable: true)
+        keyboardBridge.heldModifiers = { [weak self] in self?.heldShortcuts.heldModifiers ?? [] }
+        keyboardBridge.interrupted = { [weak self] in
+            self?.stop(); self?.stopped("macOS paused modifier handling. Press Start to resume.")
+        }
+        guard keyboardBridge.start() else {
+            stop(); return "macOS could not start keyboard modifier handling. Check Accessibility and Input Monitoring, then reopen TailorMouse."
+        }
         competingManagers = Self.steerMouseProcessIDs
         let center = NSWorkspace.shared.notificationCenter
         workspaceObservers = [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification].map { name in
@@ -162,6 +170,7 @@ final class MouseInterceptor {
         for event in heldShortcuts.releaseAll() { postHeldShortcut(event) }
         nagaInput.stop(); rawKeyboardConnections.removeAll()
         for state in states.values { releaseRawPassthrough(state) }
+        keyboardBridge.stop()
         modifierState.reset()
         if let tap { CGEvent.tapEnable(tap: tap, enable: false); CFMachPortInvalidate(tap) }
         if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }

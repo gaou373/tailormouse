@@ -77,4 +77,4 @@ In **Chords**, click a gray function row to open its editor. Expand **Chord butt
 
 ## Naga V2 HyperSpeed preview
 
-The `0.4.6-hyperspeed.1` preview adds device selection and side-button reading for the Naga V2 HyperSpeed USB receiver (`1532:00b4`). Choose that mouse in the mouse menu before pressing Start. Physical button verification is pending; see [scope, evidence and testing steps](docs/naga-v2-hyperspeed.md).
+The `0.4.6-hyperspeed.2` preview adds device selection and side-button reading for the Naga V2 HyperSpeed USB receiver (`1532:00b4`). Choose that mouse in the mouse menu before pressing Start. Physical button verification is pending; see [scope, evidence and testing steps](docs/naga-v2-hyperspeed.md).
