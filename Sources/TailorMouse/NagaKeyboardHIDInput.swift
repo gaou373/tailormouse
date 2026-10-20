@@ -3,7 +3,7 @@ import IOKit
 import IOKit.hid
 import TailorMouseCore
 
-/// Reads only original Naga Pro keyboard interfaces while handling is active.
+/// Reads only supported Naga keyboard interfaces while handling is active.
 /// Shared opens; no device seizure, feature writes, unrelated keyboard access
 /// or cursor manipulation. Polling handles reconnects without stale pointers.
 final class NagaKeyboardHIDInput {
@@ -19,7 +19,7 @@ final class NagaKeyboardHIDInput {
             let product = (IOHIDDeviceGetProperty(device, kIOHIDProductIDKey as CFString) as? NSNumber)?.intValue ?? 0
             let info = DeviceIdentity(vendorID: 0x1532, productID: product,
                 transport: IOHIDDeviceGetProperty(device, kIOHIDTransportKey as CFString) as? String ?? "Bluetooth Low Energy",
-                product: "Naga Pro", registryID: id)
+                product: IOHIDDeviceGetProperty(device, kIOHIDProductKey as CFString) as? String ?? "Naga", registryID: id)
             let location = (IOHIDDeviceGetProperty(device, kIOHIDLocationIDKey as CFString) as? NSNumber)?.intValue ?? 0
             identity = DeviceEndpoint(id: id, identity: info, senderIDs: [id],
                 connectionID: DeviceEndpoint.connectionID(identity: info, locationID: location), canIdentifyEvents: false)
@@ -42,25 +42,25 @@ final class NagaKeyboardHIDInput {
     private var scanning = false
     private var generation = 0
 
-    func refresh(wait: Bool = false) {
+    func refresh(family: String? = nil, wait: Bool = false) {
         if wait {
             generation += 1
-            let current = scanQueue.sync { autoreleasepool { Self.scan() } }
+            let current = scanQueue.sync { autoreleasepool { Self.scan(family: family) } }
             scanning = false; attach(current); return
         }
         guard !scanning else { return }
         scanning = true; let token = generation
         scanQueue.async { [weak self] in
-            let current = autoreleasepool { Self.scan() }
+            let current = autoreleasepool { Self.scan(family: family) }
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.generation == token else { return }
                 self.scanning = false; self.attach(current)
             }
         }
     }
-    private static func scan() -> [UInt64: (IOHIDDevice, NagaKeyboardReportFormat)] {
+    private static func scan(family: String?) -> [UInt64: (IOHIDDevice, NagaKeyboardReportFormat)] {
         let manager = IOHIDManagerCreate(kCFAllocatorDefault, 0)
-        IOHIDManagerSetDeviceMatchingMultiple(manager, [0x008f,0x0090,0x0092].map {
+        IOHIDManagerSetDeviceMatchingMultiple(manager, [0x008f,0x0090,0x0092,0x00b4].map {
             [kIOHIDVendorIDKey: 0x1532, kIOHIDProductIDKey: $0]
         } as CFArray)
         let connected = (IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice>) ?? []
@@ -68,9 +68,18 @@ final class NagaKeyboardHIDInput {
         for device in connected {
             let transport = IOHIDDeviceGetProperty(device, kIOHIDTransportKey as CFString) as? String ?? ""
             let product = (IOHIDDeviceGetProperty(device, kIOHIDProductIDKey as CFString) as? NSNumber)?.intValue ?? 0
-            guard let format = NagaKeyboardReportFormat(identity: DeviceIdentity(vendorID: 0x1532, productID: product, transport: transport, product: "")) else { continue }
+            let identity = DeviceIdentity(vendorID: 0x1532, productID: product, transport: transport, product: "")
+            guard family == nil || family == identity.canonicalFamily else { continue }
             let elements = (IOHIDDeviceCopyMatchingElements(device, nil, 0) as? [IOHIDElement]) ?? []
-            guard elements.contains(where: { IOHIDElementGetUsagePage($0) == 7 && IOHIDElementGetReportID($0) == format.reportID }) else { continue }
+            var reportIDs = Set(elements.filter { IOHIDElementGetUsagePage($0) == 7 }.map { IOHIDElementGetReportID($0) })
+            // On macOS 27 the element API can be empty before Input Monitoring
+            // approval. Registry descriptors remain available without opening
+            // the device; attach still requires a successful shared HID open.
+            if reportIDs.isEmpty {
+                let property = IORegistryEntryCreateCFProperty(IOHIDDeviceGetService(device), "Elements" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue()
+                reportIDs = NagaKeyboardReportFormat.keyboardReportIDs(in: property as? [[String: Any]] ?? [])
+            }
+            guard let format = NagaKeyboardReportFormat.select(identity: identity, keyboardReportIDs: reportIDs) else { continue }
             var id: UInt64 = 0
             guard IORegistryEntryGetRegistryEntryID(IOHIDDeviceGetService(device), &id) == KERN_SUCCESS, id != 0 else { continue }
             current[id] = (device, format)
@@ -99,7 +108,7 @@ final class NagaKeyboardHIDInput {
                 baseline(id, normalized)
             }
             IOHIDDeviceRegisterInputReportCallback(device, endpoint.buffer, 64, { context, result, _, _, reportID, bytes, length in
-                guard let context, result == kIOReturnSuccess, (8...9).contains(length) else { return }
+                guard let context, result == kIOReturnSuccess, (8...16).contains(length) else { return }
                 let endpoint = Unmanaged<Endpoint>.fromOpaque(context).takeUnretainedValue()
                 guard let normalized = endpoint.format.canonical(reportID: reportID, bytes: Array(UnsafeBufferPointer(start: bytes, count: length))) else { return }
                 endpoint.owner?.report(endpoint.id, 6, normalized)

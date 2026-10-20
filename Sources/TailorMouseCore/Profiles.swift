@@ -271,8 +271,15 @@ public struct ProfileConfiguration: Codable, Equatable {
         if let selectedDeviceFamily { try c.encode(selectedDeviceFamily, forKey: .selectedDeviceFamily) }
         else { try c.encodeNil(forKey: .selectedDeviceFamily) }
     }
+    public static func nagaCalibrationKey(family: String, transport: String) -> String { "\(family)|\(transport)" }
+    public static func nagaCalibrationTitle(_ key: String) -> String {
+        let parts = key.split(separator: "|", maxSplits: 1).map(String.init)
+        return parts.count == 2 ? "\(DeviceIdentity.title(forFamily: parts[0])) · \(parts[1])" : "Razer Naga Pro · \(key)"
+    }
     public func nagaInputLayout(for identity: DeviceIdentity) -> NagaKeyboardLayout {
-        (nagaKeyboardLayouts[identity.transport] ?? NagaKeyboardLayout())
+        (nagaKeyboardLayouts[Self.nagaCalibrationKey(family: identity.canonicalFamily, transport: identity.transport)]
+            ?? (identity.canonicalFamily == "razer.naga.pro" ? nagaKeyboardLayouts[identity.transport] : nil)
+            ?? NagaKeyboardLayout())
             .includingDPIButtons(remapNagaDPIButtons && NagaDPIButton.supports(identity))
     }
     public func profile(for bundleIdentifier: String?) -> MouseProfile {

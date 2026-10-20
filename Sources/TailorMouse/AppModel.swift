@@ -215,6 +215,11 @@ final class AppModel: ObservableObject {
         guard !dpiButtons.busy else { status = "Wait for DPI-button setup or recovery to finish, then press Start."; writeRuntimeStatus(); return }
         if indicators.recording { indicators.cancelRecording() }
         devices.refresh(wait: true)
+        if let family = configuration.selectedDeviceFamily,
+           !devices.connections.contains(where: { $0.identity.canonicalFamily == family }) {
+            status = "Selected mouse is disconnected. Choose your connected mouse from the mouse menu before pressing Start."
+            writeRuntimeStatus(); return
+        }
         if let error = interceptor.start() { status = error; writeRuntimeStatus(); return }
         isRunning = true
         pointer.start()

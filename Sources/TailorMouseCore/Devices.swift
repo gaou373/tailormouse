@@ -12,7 +12,21 @@ public struct DeviceIdentity: Equatable, Codable {
     /// Original Naga Pro transport aliases. Names alone never identify a supported device.
     public var canonicalFamily: String {
         if vendorID == 0x1532 && [0x008f, 0x0090, 0x0092].contains(productID) { return "razer.naga.pro" }
+        if vendorID == 0x1532 && productID == 0x00b4 { return "razer.naga.v2.hyperspeed" }
         return String(format: "hid.%04x.%04x", vendorID, productID)
+    }
+    public var supportsNagaKeyboard: Bool {
+        canonicalFamily == "razer.naga.pro" || canonicalFamily == "razer.naga.v2.hyperspeed"
+    }
+    public static func supportsNagaKeyboard(family: String?) -> Bool {
+        family == nil || family == "razer.naga.pro" || family == "razer.naga.v2.hyperspeed"
+    }
+    public static func title(forFamily family: String) -> String {
+        switch family {
+        case "razer.naga.pro": return "Razer Naga Pro"
+        case "razer.naga.v2.hyperspeed": return "Razer Naga V2 HyperSpeed"
+        default: return family
+        }
     }
 }
 
