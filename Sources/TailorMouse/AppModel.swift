@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import Combine
 import TailorMouseCore
 import UniformTypeIdentifiers
@@ -23,6 +24,7 @@ final class AppModel: ObservableObject {
     private var saveSubscription: AnyCancellable?
     private var terminationObserver: NSObjectProtocol?
     private var hasEdits = false
+    private var launchHandling = LaunchHandling()
     private var statusWork: DispatchWorkItem?
     private let statusQueue = DispatchQueue(label: "dev.tailormouse.runtime-status", qos: .utility)
     private var originalNeedsBackup = false
@@ -59,8 +61,6 @@ final class AppModel: ObservableObject {
                 let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
                 originalNeedsBackup = (json?["schemaVersion"] as? Int) != 3
                 configuration = loaded
-                // Retire the incorrect wheel-based DPI opt-in without altering mappings.
-                configuration.remapNagaDPIButtons = false
                 selectedID = loaded.defaultProfile.id
             } catch {
                 originalNeedsBackup = true
@@ -125,7 +125,7 @@ final class AppModel: ObservableObject {
 
     func setDPIButtonRemapping(_ enabled: Bool) {
         guard !isRunning, !dpiButtons.busy else { return }
-        hasEdits = true; configuration.remapNagaDPIButtons = false
+        hasEdits = true; configuration.remapNagaDPIButtons = enabled
     }
 
     func updateCursorTracking(_ settings: CursorTrackingSettings) {
@@ -211,8 +211,25 @@ final class AppModel: ObservableObject {
         selectedID = configuration.defaultProfile.id
     }
 
+    func applicationOpened() {
+        guard launchHandling.shouldStart(enabled: configuration.autoStartOnOpen, preview: preview), !isRunning else { return }
+        guard AXIsProcessTrusted(), CGPreflightListenEventAccess() else {
+            status = "Automatic start needs Accessibility and Input Monitoring. Open Permissions, then reopen TailorMouse or press Start."
+            writeRuntimeStatus(); return
+        }
+        start()
+    }
+    func setAutoStartOnOpen(_ enabled: Bool) {
+        hasEdits = true; configuration.autoStartOnOpen = enabled
+    }
+
     func start() {
         guard !dpiButtons.busy else { status = "Wait for DPI-button setup or recovery to finish, then press Start."; writeRuntimeStatus(); return }
+        let nagaUSB = DeviceIdentity(vendorID: 0x1532, productID: 0x0090, transport: "USB", product: "Naga Pro")
+        if configuration.remapNagaDPIButtons && (configuration.selectedDeviceFamily == nil || configuration.selectedDeviceFamily == "razer.naga.pro") && configuration.nagaCalibration(for: nagaUSB).hasDPIButtonAliasConflict {
+            status = "USB side-button calibration uses F13/F14. Disable DPI remapping or change that calibration first."
+            writeRuntimeStatus(); return
+        }
         if indicators.recording { indicators.cancelRecording() }
         devices.refresh(wait: true)
         if let family = configuration.selectedDeviceFamily,
@@ -222,6 +239,7 @@ final class AppModel: ObservableObject {
         }
         if let error = interceptor.start() { status = error; writeRuntimeStatus(); return }
         isRunning = true
+        if configuration.remapNagaDPIButtons && (configuration.selectedDeviceFamily == nil || configuration.selectedDeviceFamily == "razer.naga.pro") { dpiButtons.start() }
         pointer.start()
         guard isRunning else { return }
         sideButtonDownEvents.removeAll(); sideButtonUpEvents.removeAll()
@@ -257,7 +275,7 @@ final class AppModel: ObservableObject {
     private func persistRuntimeStatus(wait: Bool = false) {
         let snapshot: [String: Any] = [
             "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development",
-            "isRunning": isRunning, "status": status, "lastInput": lastInput,
+            "isRunning": isRunning, "autoStartOnOpen": configuration.autoStartOnOpen, "status": status, "lastInput": lastInput,
             "connectionCount": devices.connections.count,
             "bluetoothRawEndpointCount": interceptor.bluetoothEndpointCount,
             "rawKeyboardEndpointCount": interceptor.rawKeyboardEndpointCount,
@@ -298,8 +316,6 @@ final class AppModel: ObservableObject {
             if isRunning { stop() }
             hasEdits = true
             configuration = loaded
-                // Retire the incorrect wheel-based DPI opt-in without altering mappings.
-                configuration.remapNagaDPIButtons = false
             selectedID = loaded.defaultProfile.id
             if save(loaded) { status = "Profiles imported. Press Start when you are ready." }
         } catch { status = "Import failed: \(error.localizedDescription)" }

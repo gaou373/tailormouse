@@ -2,9 +2,9 @@
 
 TailorMouse 0.4.0 adds Sparkle 2.9.6 (pinned in `Package.resolved`) and a universal DMG for macOS 13+. Recipients do not need Git, Node, Xcode, or a GitHub account. The public download is:
 
-https://github.com/gaou373/tailormouse/releases/download/v0.4.5/TailorMouse-0.4.5-universal.dmg
+https://github.com/gaou373/tailormouse/releases/download/v0.4.6/TailorMouse-0.4.6-universal.dmg
 
-Open the DMG, drag TailorMouse onto Applications, eject it, then open the installed app and approve Accessibility/Input Monitoring. The app starts stopped. Full side-panel support is currently verified for the original Naga Pro, not every Naga model. The image includes installation instructions, actual signing status, the application, and an Applications symlink. User settings, calibration, diagnostics, publisher credentials and research artifacts are not packaged.
+Open the DMG, drag TailorMouse onto Applications, eject it, then open the installed app and approve Accessibility/Input Monitoring. Handling starts automatically after permission approval when the app opens; Support can disable this. Original Naga Pro support spans its three connections, and HyperSpeed receiver support has initial contributor acceptance. The image includes installation instructions, actual signing status, the application, and an Applications symlink. User settings, calibration, diagnostics, publisher credentials and research artifacts are not packaged.
 
 ## Preview signing versus Apple distribution signing
 
@@ -18,7 +18,7 @@ For a future Apple-signed release, configure an existing Developer ID identity a
 
 Choose **TailorMouse → Check for Updates…**, or use **Support**. Automatic checking is opt-in and can be toggled in Support. Silent/automatic installation is disabled; the recipient chooses Install. The stable HTTPS appcast URL is embedded in the bundle and points at the latest GitHub release asset `appcast.xml`. Sparkle validates the signed feed and downloaded archive before extraction/replacement. System profiling and release-note JavaScript remain disabled.
 
-Checks are blocked when running directly from the usual mounted image or App Translocation, and while the main window has an editor sheet open. If an editor opens after an update check, installation waits until that editor is finished; handling stops before installation/relaunch. Sparkle owns replacement and recovery, and the relaunched app still requires Start. The update contains no profiles, so local configuration stays separate in Application Support.
+Checks are blocked when running directly from the usual mounted image or App Translocation, and while the main window has an editor sheet open. If an editor opens after an update check, installation waits until that editor is finished; handling stops before installation/relaunch. Sparkle owns replacement and recovery, and the relaunched app honors the automatic-start preference. Automatic start defaults on and can be disabled in Support. The update contains no profiles, so local configuration stays separate in Application Support.
 
 ## Preparing the next release
 

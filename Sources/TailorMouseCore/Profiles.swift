@@ -222,6 +222,7 @@ public struct ProfileConfiguration: Codable, Equatable {
     public var defaultProfile: MouseProfile
     public var appProfiles: [MouseProfile]
     public var selectedDeviceFamily: String?
+    public var autoStartOnOpen = true
     public var remapNagaDPIButtons = false
     public var nagaKeyboardLayouts: [String: NagaKeyboardLayout]
     public var nagaWiredTrackingReference: NativePointerValues?
@@ -232,7 +233,7 @@ public struct ProfileConfiguration: Codable, Equatable {
         self.nagaWiredTrackingReference = nagaWiredTrackingReference
         self.cursorTracking = cursorTracking ?? CursorTrackingSettings(acceleration: defaultProfile.pointerAcceleration, sensitivity: defaultProfile.pointerSensitivity)
     }
-    private enum CodingKeys: String, CodingKey { case schemaVersion, defaultProfile, appProfiles, selectedDeviceFamily, nagaKeyboardLayouts, nagaWiredTrackingReference, cursorTracking, remapNagaDPIButtons }
+    private enum CodingKeys: String, CodingKey { case schemaVersion, defaultProfile, appProfiles, selectedDeviceFamily, nagaKeyboardLayouts, nagaWiredTrackingReference, cursorTracking, autoStartOnOpen; case remapNagaDPIButtons = "remapPhysicalNagaDPIButtons" }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let version = try c.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
@@ -240,6 +241,7 @@ public struct ProfileConfiguration: Codable, Equatable {
         defaultProfile = try c.decodeIfPresent(MouseProfile.self, forKey: .defaultProfile) ?? MouseProfile()
         appProfiles = try c.decodeIfPresent([MouseProfile].self, forKey: .appProfiles) ?? []
         selectedDeviceFamily = c.contains(.selectedDeviceFamily) ? try c.decodeIfPresent(String.self, forKey: .selectedDeviceFamily) : "razer.naga.pro"
+        autoStartOnOpen = try c.decodeIfPresent(Bool.self, forKey: .autoStartOnOpen) ?? true
         remapNagaDPIButtons = try c.decodeIfPresent(Bool.self, forKey: .remapNagaDPIButtons) ?? false
         nagaKeyboardLayouts = try c.decodeIfPresent([String: NagaKeyboardLayout].self, forKey: .nagaKeyboardLayouts) ?? [:]
         nagaWiredTrackingReference = try c.decodeIfPresent(NativePointerValues.self, forKey: .nagaWiredTrackingReference)
@@ -265,6 +267,7 @@ public struct ProfileConfiguration: Codable, Equatable {
         try c.encode(defaultProfile, forKey: .defaultProfile)
         try c.encode(appProfiles, forKey: .appProfiles)
         try c.encode(cursorTracking, forKey: .cursorTracking)
+        try c.encode(autoStartOnOpen, forKey: .autoStartOnOpen)
         try c.encode(remapNagaDPIButtons, forKey: .remapNagaDPIButtons)
         try c.encode(nagaKeyboardLayouts, forKey: .nagaKeyboardLayouts)
         try c.encodeIfPresent(nagaWiredTrackingReference, forKey: .nagaWiredTrackingReference)
@@ -276,11 +279,13 @@ public struct ProfileConfiguration: Codable, Equatable {
         let parts = key.split(separator: "|", maxSplits: 1).map(String.init)
         return parts.count == 2 ? "\(DeviceIdentity.title(forFamily: parts[0])) · \(parts[1])" : "Razer Naga Pro · \(key)"
     }
-    public func nagaInputLayout(for identity: DeviceIdentity) -> NagaKeyboardLayout {
-        (nagaKeyboardLayouts[Self.nagaCalibrationKey(family: identity.canonicalFamily, transport: identity.transport)]
+    public func nagaCalibration(for identity: DeviceIdentity) -> NagaKeyboardLayout {
+        nagaKeyboardLayouts[Self.nagaCalibrationKey(family: identity.canonicalFamily, transport: identity.transport)]
             ?? (identity.canonicalFamily == "razer.naga.pro" ? nagaKeyboardLayouts[identity.transport] : nil)
-            ?? NagaKeyboardLayout())
-            .includingDPIButtons(remapNagaDPIButtons && NagaDPIButton.supports(identity))
+            ?? NagaKeyboardLayout()
+    }
+    public func nagaInputLayout(for identity: DeviceIdentity) -> NagaKeyboardLayout {
+        nagaCalibration(for: identity).includingDPIButtons(remapNagaDPIButtons && NagaDPIButton.supports(identity))
     }
     public func profile(for bundleIdentifier: String?) -> MouseProfile {
         guard let bundleIdentifier else { return defaultProfile }

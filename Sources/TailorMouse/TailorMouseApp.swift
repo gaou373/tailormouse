@@ -14,6 +14,7 @@ struct TailorMouseApp: App {
                     NSApp.setActivationPolicy(.regular); NSApp.activate(ignoringOtherApps: true)
                     Self.adoptCompactWindowOnce()
                     model.updater.start { [weak model] in model?.stop() }
+                    model.applicationOpened()
                 }
         }
         .defaultSize(width: 680, height: 510)
@@ -143,7 +144,7 @@ struct ContentView: View {
                     }.pickerStyle(.segmented).labelsHidden().frame(width: 460).accessibilityLabel("Settings tabs")
                     Group {
                         if tab == .buttons {
-                            ButtonsView(profile: profile, indicators: model.indicators, dpiButtons: model.dpiButtons, dpiEnabled: Binding(get: { model.configuration.remapNagaDPIButtons }, set: { model.setDPIButtonRemapping($0) }), running: model.isRunning)
+                            ButtonsView(profile: profile, indicators: model.indicators, dpiButtons: model.dpiButtons, dpiEnabled: Binding(get: { model.configuration.remapNagaDPIButtons }, set: { model.setDPIButtonRemapping($0) }), running: model.isRunning, dpiAvailable: (model.configuration.selectedDeviceFamily == nil || model.configuration.selectedDeviceFamily == "razer.naga.pro") && catalog.connections.contains { NagaDPIButton.supports($0.identity) })
                         } else if tab == .chords {
                             ChordsView(profile: profile, indicators: model.indicators, prepareRecording: { if model.isRunning { model.stop() }; catalog.refresh() })
                                 .padding(.horizontal, 12).padding(.bottom, 4)
@@ -266,14 +267,15 @@ private struct ButtonsView: View {
     @ObservedObject var dpiButtons: NagaDPIButtons
     @Binding var dpiEnabled: Bool
     var running: Bool
+    var dpiAvailable: Bool
     @State private var showDPISetup = false
     @State private var page = 0
     @State private var modifiers = ModifierMask()
     @State private var selection: ButtonSelection?
     init(profile: Binding<MouseProfile>, indicators: InputIndicators = InputIndicators(), initialPage: Int = 0,
-         dpiButtons: NagaDPIButtons = NagaDPIButtons(), dpiEnabled: Binding<Bool> = .constant(false), running: Bool = false) {
+         dpiButtons: NagaDPIButtons = NagaDPIButtons(), dpiEnabled: Binding<Bool> = .constant(false), running: Bool = false, dpiAvailable: Bool = true) {
         _profile = profile; self.indicators = indicators; _page = State(initialValue: initialPage)
-        self.dpiButtons = dpiButtons; _dpiEnabled = dpiEnabled; self.running = running
+        self.dpiButtons = dpiButtons; _dpiEnabled = dpiEnabled; self.running = running; self.dpiAvailable = dpiAvailable
     }
     private var effectiveModifiers: ModifierMask { modifiers.union(indicators.modifiers) }
     private var ordinaryButtons: [Int] { VisibleMouseButtons.ordinary(observed: indicators.observedOrdinaryButtons) }
@@ -298,8 +300,8 @@ private struct ButtonsView: View {
                                 }.padding(.horizontal, 8).frame(height: 23)
                                     .frame(maxWidth: .infinity).background(CompactTheme.control, in: RoundedRectangle(cornerRadius: 5))
                                     .overlay(RoundedRectangle(cornerRadius: 5).stroke(indicators.detectedButton == button ? CompactTheme.accent : .clear, lineWidth: 2))
-                            }.buttonStyle(.plain).disabled(NagaDPIButton(rawValue: button) != nil)
-                                .help(NagaDPIButton(rawValue: button) != nil ? "DPI remapping is unavailable pending hardware verification." : "Edit \(compactButtonTitle(button))")
+                            }.buttonStyle(.plain)
+                                .help("Edit \(compactButtonTitle(button))")
                         }
                     }
                 }
@@ -330,8 +332,8 @@ private struct ButtonsView: View {
                 Text(indicators.detectedButton.map(compactButtonTitle) ?? indicators.inspectionMessage)
                     .font(.system(size: 10)).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true).foregroundStyle(.secondary)
                 Toggle("Remap DPI buttons", isOn: $dpiEnabled).toggleStyle(.checkbox).font(.system(size: 11))
-                    .disabled(true)
-                    .help("Unavailable while physical DPI-button remapping is being verified. Scroll-wheel assignments are preserved.")
+                    .disabled(running || dpiButtons.busy || !dpiAvailable)
+                    .help("Physical DPI buttons on the original Naga Pro over USB cable or receiver. Stop restores their original assignments.")
                 Button("DPI setup…") { showDPISetup = true }.controlSize(.mini)
                     .popover(isPresented: $showDPISetup) {
                         DPIButtonSetupView(dpiButtons: dpiButtons, running: running)
@@ -371,11 +373,11 @@ private struct DPIButtonSetupView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("DPI Button Remapping").font(.headline)
-            Text("DPI-button remapping is temporarily unavailable. The previous implementation incorrectly addressed the scroll wheel.")
-            Text("The physical DPI buttons require separate hardware verification before remapping can be enabled.")
-            Text("If an older version changed scrolling, stop handling, reconnect the same mouse and onboard profile, then restore its wheel assignments below.")
+            Text("Enable Remap DPI buttons while stopped, assign DPI Up and DPI Down on the first Buttons page, then start handling.")
+            Text("Original Naga Pro · USB cable or receiver. Bluetooth and other Naga models are not supported for physical DPI remapping yet. The scroll wheel is unaffected.")
+            Text("Stop or Quit restores the original assignments. After a crash or unplug, reconnect the same mouse, USB port and onboard profile, then restore assignments below.")
             Text(dpiButtons.message).foregroundStyle(.secondary)
-            Button("Restore Wheel Assignments", action: dpiButtons.restoreWhileStopped).disabled(running || dpiButtons.busy)
+            Button("Restore Button Assignments", action: dpiButtons.restoreWhileStopped).disabled(running || dpiButtons.busy)
         }.font(.callout).padding(18).frame(width: 330).fixedSize(horizontal: false, vertical: true)
     }
 }
@@ -457,7 +459,7 @@ private struct ButtonActionSheet: View {
 private struct SupportView: View {
     @ObservedObject var model: AppModel
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 12) {
             Text("TailorMouse").font(.system(size: 20, weight: .semibold))
             Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development")")
                 .foregroundStyle(.secondary)
@@ -466,7 +468,8 @@ private struct SupportView: View {
             Button("Accessibility & Input Monitoring…", action: model.openPermissions)
             AppUpdateControls(updater: model.updater)
             Link("Downloads & Help", destination: URL(string: "https://github.com/gaou373/tailormouse")!)
-            Text("Mouse handling starts only when you press Start. Cursor tracking changes apply while Running and restore when you press Stop.")
+            Toggle("Start mouse handling when TailorMouse opens", isOn: Binding(get: { model.configuration.autoStartOnOpen }, set: model.setAutoStartOnOpen))
+            Text("Stop stays paused until Start or relaunch. Cursor tracking restores on Stop.")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }

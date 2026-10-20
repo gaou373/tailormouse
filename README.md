@@ -4,9 +4,9 @@ An independently written macOS mouse customization app, informed by an evidence-
 
 ## Download for a friend
 
-[Download TailorMouse 0.4.5 for Apple Silicon and Intel Macs](https://github.com/gaou373/tailormouse/releases/download/v0.4.5/TailorMouse-0.4.5-universal.dmg) · Requires macOS 13 or later.
+[Download TailorMouse 0.4.6 for Apple Silicon and Intel Macs](https://github.com/gaou373/tailormouse/releases/download/v0.4.6/TailorMouse-0.4.6-universal.dmg) · Requires macOS 13 or later.
 
-Open the DMG, drag TailorMouse into Applications, eject the image, then open the app. Approve Accessibility and Input Monitoring and press Start when ready. **This preview is not Apple notarized**, so macOS may require a trusted-app review at first launch. Choose **TailorMouse → Check for Updates…** for future releases; no GitHub account or developer tools are needed. [Installation, signing and update details](docs/distribution.md).
+Open the DMG, drag TailorMouse into Applications, eject the image, then open the app. Approve Accessibility and Input Monitoring, then reopen the app to start handling automatically. Stop remains available; automatic start can be disabled in Support. **This preview is not Apple notarized**, so macOS may require a trusted-app review at first launch. Choose **TailorMouse → Check for Updates…** for future releases; no GitHub account or developer tools are needed. [Installation, signing and update details](docs/distribution.md).
 
 ## Features
 
@@ -18,14 +18,14 @@ Open the DMG, drag TailorMouse into Applications, eject the image, then open the
 - Separate horizontal/vertical wheel speed and direction controls.
 - Live native acceleration and sensitivity sliders with numeric controls, with original tracking restored on Stop.
 - Wired Naga Pro hardware DPI slider with verified writes, backups and Restore.
-- Recovery for older wheel assignments; physical DPI-button remapping is disabled pending hardware verification.
+- Opt-in physical DPI Up/Down mappings for the original Naga Pro over USB cable or receiver, with journaled restoration and legacy wheel recovery.
 - Ordered action categories, roll-direction assignments and physical modifier highlighting.
 - Read-only button identification while hovering over the mouse illustration.
 - Device discovery.
 - One Naga Pro family across Bluetooth, wired USB and the wireless receiver.
 - One device row per physical connection, with transport calibration for custom onboard keys.
 - Persistent last-side-button press and release indicators.
-- Explicit Start/Stop and a menu-bar Stop control. Input handling starts stopped.
+- Automatic handling once per app launch, an opt-out in Support, and manual Start/Stop controls.
 
 This is an initial functional recreation of common controls, not full SteerMouse parity. Physical Naga buttons still require testing on every transport. Ordinary buttons and USB/receiver keyboard input use Quartz events. While Running, the original Bluetooth Naga also has a scoped raw reader for its numbered side-button reports, covering a connection that provides HID input without Quartz keyboard events. Missing/unknown report formats and vendor firmware initialization remain outside the implementation. Cursor tracking uses native macOS HID service parameters for supported mice; trackpads are excluded. See [implementation and validation](docs/implementation.md).
 
@@ -46,7 +46,7 @@ Ad hoc signing identifies the exact build: macOS can retain an enabled-looking p
 
 In **Chords**, choose **Scroll → Scroll Up / Down / Left / Right** as an input alongside a mouse button. Hold the button and scroll to repeat the action; **Record** can capture a direction too. See [scroll chords](docs/chord-recording.md#0313-scroll-inputs).
 
-Choose **Default** or an application in the top profile menu; **Edit** adds/removes application profiles and imports/exports settings. In **Buttons**, click an assignment to open its editor. **OK** saves; **Cancel** leaves the mapping unchanged. The page dots select ordinary buttons, side buttons 1–6 and side buttons 7–12. Only physically observed extra buttons appear; hidden saved mappings are preserved. The shortcut editor's dropdown chooses keys without pressing them, including F1–F24. F21–F24 require receiving-app support for AppKit function characters; see [Fix Request 2](docs/fix-request-2.md). The modifier strip selects mappings for keys held while clicking. Configure mappings, then press **Start** when ready. Active handling requires Accessibility and Input Monitoring permission. The app checks permissions and refuses to start while SteerMouse Manager runs; it never quits that manager. Builds, tests and installation do not enable handling, grant permissions or add login items.
+Choose **Default** or an application in the top profile menu; **Edit** adds/removes application profiles and imports/exports settings. In **Buttons**, click an assignment to open its editor. **OK** saves; **Cancel** leaves the mapping unchanged. The page dots select ordinary buttons, side buttons 1–6 and side buttons 7–12. Only physically observed extra buttons appear; hidden saved mappings are preserved. The shortcut editor's dropdown chooses keys without pressing them, including F1–F24. F21–F24 require receiving-app support for AppKit function characters; see [Fix Request 2](docs/fix-request-2.md). The modifier strip selects mappings for keys held while clicking. Handling starts automatically when the app opens; use **Stop** to pause and **Start** to resume. Active handling requires Accessibility and Input Monitoring permission. The app checks permissions and refuses to start while SteerMouse Manager runs; it never quits that manager. Builds, tests and installation do not enable handling, grant permissions or add login items.
 
 Unassigned Naga side buttons use **No action** while running, preventing unintended typing and alert sounds. Explicit **Passthrough** forwards their native keys. If ordinary clicks appear in activity but the side panel does not, exclude the Naga in Karabiner-Elements → Devices; its virtual keyboard can hide the physical sender. See the [wired diagnosis](docs/research/wired-runtime.md) and [Bluetooth report investigation](docs/research/bluetooth-runtime.md).
 
@@ -62,7 +62,7 @@ The original wired Naga Pro has separate explicit [onboard diagnostics](docs/res
 
 Version 0.2.7 reads original Naga Pro Bluetooth keyboard report 6 directly while Running. Repeated snapshots are filtered, held keys retain their matching releases, and the existing shared profiles still choose actions. Recognized native Quartz copies are consumed when the raw reader owns that endpoint; generated Passthrough events are tagged so they are not handled again. Stop/disconnect attempts a release for every synthetic Passthrough key still held. The reader uses shared access and stops with handling; it never changes mouse firmware, keyboard rules or pointer movement.
 
-Physical **DPI Up** and **DPI Down** remapping is disabled in 0.4.5: the earlier implementation incorrectly addressed the scroll wheel. Saved actions are retained, and legacy wheel restoration remains available; see [verification and recovery details](docs/dpi-buttons.md). The Cursor hardware-DPI slider and presets remain separate.
+Physical **DPI Up** and **DPI Down** can be assigned on the first Buttons page. Stop handling, enable **Remap DPI buttons**, choose their actions, then Start. This targets only the original Naga Pro over USB cable or receiver; Bluetooth and HyperSpeed DPI remapping remain unavailable. The earlier wheel-slot error is corrected, and legacy recovery remains available. See [verification and recovery details](docs/dpi-buttons.md). The Cursor hardware-DPI slider and presets remain separate.
 
 ## Research
 
@@ -77,4 +77,4 @@ In **Chords**, click a gray function row to open its editor. Expand **Chord butt
 
 ## Naga V2 HyperSpeed preview
 
-The `0.4.6-hyperspeed.2` preview adds device selection and side-button reading for the Naga V2 HyperSpeed USB receiver (`1532:00b4`). Choose that mouse in the mouse menu before pressing Start. Physical button verification is pending; see [scope, evidence and testing steps](docs/naga-v2-hyperspeed.md).
+The `0.4.6-hyperspeed.2` preview adds device selection and side-button reading for the Naga V2 HyperSpeed USB receiver (`1532:00b4`). Choose that mouse in the mouse menu before pressing Start. Basic bindings were reported working by the contributor; all-twelve-button and reconnect acceptance remain pending; see [scope, evidence and testing steps](docs/naga-v2-hyperspeed.md).

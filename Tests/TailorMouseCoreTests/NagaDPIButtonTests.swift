@@ -5,9 +5,9 @@ final class NagaDPIButtonTests: XCTestCase {
     private let originals = [NagaDPIButtonBinding(slot: 9, block: [1,1,9,0,0,0,0]), NagaDPIButtonBinding(slot: 10, block: [1,1,10,0,0,0,0])]
     private var targets: [NagaDPIButtonBinding] { NagaDPIButtonBinding.legacyTargets }
 
-    func testRetiredOptInCannotEnableAliasesOnAnyConnection() {
+    func testOnlyOriginalUSBAndReceiverCanEnablePhysicalAliases() {
         var config = ProfileConfiguration(); config.remapNagaDPIButtons = true
-        for (product, transport, expected) in [(0x008f,"USB",false),(0x0090,"USB",false),(0x0092,"Bluetooth Low Energy",false),(0x00a8,"USB",false),(0x008f,"Bluetooth",false)] {
+        for (product, transport, expected) in [(0x008f,"USB",true),(0x0090,"USB",true),(0x0092,"Bluetooth Low Energy",false),(0x00a8,"USB",false),(0x008f,"Bluetooth",false)] {
             let identity = DeviceIdentity(vendorID: 0x1532, productID: product, transport: transport, product: "Naga")
             XCTAssertEqual(config.nagaInputLayout(for: identity).button(for: 105), expected ? 112 : nil)
             XCTAssertEqual(config.nagaInputLayout(for: identity).button(for: 107), expected ? 113 : nil)
@@ -22,7 +22,8 @@ final class NagaDPIButtonTests: XCTestCase {
         let encoded = try JSONEncoder().encode(config)
         XCTAssertEqual(try JSONDecoder().decode(ProfileConfiguration.self, from: encoded), config)
         var object = try JSONSerialization.jsonObject(with: encoded) as! [String: Any]
-        object.removeValue(forKey: "remapNagaDPIButtons")
+        object.removeValue(forKey: "remapPhysicalNagaDPIButtons")
+        object["remapNagaDPIButtons"] = true
         let legacy = try JSONDecoder().decode(ProfileConfiguration.self, from: JSONSerialization.data(withJSONObject: object))
         XCTAssertFalse(legacy.remapNagaDPIButtons)
         XCTAssertEqual(legacy.defaultProfile.bindings, config.defaultProfile.bindings)
@@ -34,8 +35,7 @@ final class NagaDPIButtonTests: XCTestCase {
         XCTAssertEqual(active.sequences, original.sequences)
         XCTAssertNil(original.button(for: 105))
         XCTAssertFalse(NagaBluetoothReportDecoder.handles(keyCode: 105, layout: original))
-        XCTAssertFalse(NagaBluetoothReportDecoder.handles(keyCode: 105, layout: active))
-        XCTAssertEqual(active, original)
+        XCTAssertTrue(NagaBluetoothReportDecoder.handles(keyCode: 105, layout: active))
         XCTAssertEqual(original.includingDPIButtons(false), original)
     }
     func testConflictingCalibrationIsRetainedRatherThanReinterpreted() {
@@ -63,7 +63,7 @@ final class NagaDPIButtonTests: XCTestCase {
             XCTAssertEqual(read[7], 0x8c)
             XCTAssertEqual(write[88], NagaDPIButtonProtocol.checksum(write))
         }
-        for slot: UInt8 in [0,1,8,11,0x40,0x60] {
+        for slot: UInt8 in [0,1,8,13,0x40,0x60] {
             XCTAssertThrowsError(try NagaDPIButtonProtocol.read(slot: slot))
             XCTAssertThrowsError(try NagaDPIButtonProtocol.write(.init(slot: slot, block: [1,1,1,0,0,0,0])))
         }
@@ -84,12 +84,14 @@ final class NagaDPIButtonTests: XCTestCase {
         XCTAssertThrowsError(try NagaDPIButtonProtocol.parse(response, slot: 9))
         XCTAssertThrowsError(try NagaDPIButtonProtocol.parse(Array(response.dropLast()), slot: 9))
     }
-    func testPhysicalDPISlotsAreNotWheelSlotsAndCannotBeProgrammed() {
+    func testOnlyPhysicalDPITargetsCanBeProgrammedAndLegacyWheelTunnelsStayForbidden() {
         XCTAssertEqual(NagaDPIButton.up.slot, 12)
         XCTAssertEqual(NagaDPIButton.down.slot, 11)
-        XCTAssertFalse(NagaDPIButton.remappingAvailable)
+        XCTAssertTrue(NagaDPIButton.remappingAvailable)
         for button in NagaDPIButton.allCases {
-            XCTAssertThrowsError(try NagaDPIButtonProtocol.write(.init(slot: button.slot, block: [2,2,0,button.usage,0,0,0])))
+            let packet = try! NagaDPIButtonProtocol.write(.init(slot: button.slot, block: [2,2,0,button.usage,0,0,0]))
+            XCTAssertEqual(Array(packet[8..<11]), [0,button.slot,0])
+            XCTAssertFalse([UInt8(9),10].contains(packet[9]))
         }
         // The old wheel-to-F13/F14 assignments can only be recognized for restoration.
         for target in targets { XCTAssertThrowsError(try NagaDPIButtonProtocol.write(target)) }
@@ -124,8 +126,11 @@ final class NagaDPIButtonTests: XCTestCase {
         }, write: { writes.append($0.slot) })) { error in XCTAssertEqual(error as? NagaDPIButtonError, .recovery) }
         XCTAssertEqual(reads, [10,9]); XCTAssertEqual(writes, [9])
     }
-    func testLegacyWheelTunnelCannotDispatchDPIBindingsEvenWithSavedOptIn() {
-        var config = ProfileConfiguration(); config.remapNagaDPIButtons = true
+    func testLegacyWheelTunnelCannotDispatchDPIBindingsWithOldSavedOptIn() throws {
+        var object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(ProfileConfiguration())) as! [String:Any]
+        object.removeValue(forKey: "remapPhysicalNagaDPIButtons"); object["remapNagaDPIButtons"] = true
+        let config = try JSONDecoder().decode(ProfileConfiguration.self, from: JSONSerialization.data(withJSONObject: object))
+        XCTAssertFalse(config.remapNagaDPIButtons)
         let identity = DeviceIdentity(vendorID: 0x1532, productID: 0x0090, transport: "USB", product: "Naga")
         let layout = config.nagaInputLayout(for: identity)
         var decoder = NagaKeyboardDecoder()

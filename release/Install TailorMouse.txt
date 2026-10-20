@@ -5,12 +5,13 @@ macOS 13 or later • Apple Silicon and Intel
 2. Eject the TailorMouse disk image.
 3. Open TailorMouse from Applications.
 4. Use Permissions… to approve TailorMouse in Accessibility and Input Monitoring.
-5. Choose your mappings, then press Start. Stop restores normal mouse handling.
+5. Reopen TailorMouse after approval. Handling starts automatically when the app opens.
+   Stop restores normal handling; automatic start can be disabled in Support.
 
 UPDATES
 Choose TailorMouse → Check for Updates… in the menu bar, or open Support.
 You can opt into automatic checks. Installation still needs your approval.
-Updates preserve local profiles and reopen with handling stopped.
+Updates preserve local profiles and honor your Start when opened preference.
 If a preview update changes the app's permission identity, remove/re-add only
 TailorMouse in Accessibility and Input Monitoring, then reopen it.
 
@@ -22,7 +23,8 @@ A Developer ID signed, notarized release is needed for a smoother first launch.
 
 MOUSE SUPPORT
 Full side-button support currently targets the original Razer Naga Pro across
-USB cable, receiver and Bluetooth. Other Naga models are not yet verified.
+USB cable, receiver and Bluetooth. Naga V2 HyperSpeed receiver support has initial contributor acceptance.
+Physical DPI-button remapping supports only the original Naga Pro over USB/receiver.
 Avoid running multiple mouse remappers against the same mouse at the same time.
 
 Your settings remain local. This download contains no publisher profiles,

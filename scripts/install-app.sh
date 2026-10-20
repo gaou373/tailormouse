@@ -22,4 +22,4 @@ if [[ -e "$DESTINATION" ]]; then
 fi
 mv "$STAGED" "$DESTINATION"
 codesign --verify --strict "$DESTINATION"
-printf 'Installed %s. Open the app and press Start when ready.\n' "$DESTINATION"
+printf 'Installed %s. Open the app; handling starts automatically when enabled.\n' "$DESTINATION"
