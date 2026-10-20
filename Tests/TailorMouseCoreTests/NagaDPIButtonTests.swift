@@ -5,14 +5,16 @@ final class NagaDPIButtonTests: XCTestCase {
     private let originals = [NagaDPIButtonBinding(slot: 9, block: [1,1,9,0,0,0,0]), NagaDPIButtonBinding(slot: 10, block: [1,1,10,0,0,0,0])]
     private var targets: [NagaDPIButtonBinding] { NagaDPIButtonBinding.legacyTargets }
 
-    func testOnlyOriginalUSBAndReceiverCanEnablePhysicalAliases() {
+    func testOnlyVerifiedUSBAndReceiverModelsCanEnablePhysicalAliases() {
         var config = ProfileConfiguration(); config.remapNagaDPIButtons = true
-        for (product, transport, expected) in [(0x008f,"USB",true),(0x0090,"USB",true),(0x0092,"Bluetooth Low Energy",false),(0x00a8,"USB",false),(0x008f,"Bluetooth",false)] {
+        for (product, transport, expected) in [(0x008f,"USB",true),(0x0090,"USB",true),(0x00b4,"USB",true),(0x0092,"Bluetooth Low Energy",false),(0x00a8,"USB",false),(0x008f,"Bluetooth",false),(0x00b4,"Bluetooth",false)] {
             let identity = DeviceIdentity(vendorID: 0x1532, productID: product, transport: transport, product: "Naga")
             XCTAssertEqual(config.nagaInputLayout(for: identity).button(for: 80), expected ? 112 : nil)
             XCTAssertEqual(config.nagaInputLayout(for: identity).button(for: 90), expected ? 113 : nil)
         }
         XCTAssertFalse(NagaDPIButton.supports(DeviceIdentity(vendorID: 1, productID: 0x008f, transport: "USB", product: "Other")))
+        XCTAssertTrue(NagaDPIButton.supports(family: nil))
+        XCTAssertFalse(NagaDPIButton.supports(family: "hid.1532.00a8"))
     }
     func testOptInRoundTripsAndLegacyConfigurationsStayOff() throws {
         var config = ProfileConfiguration()

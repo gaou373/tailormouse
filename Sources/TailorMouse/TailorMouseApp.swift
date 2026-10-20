@@ -5,9 +5,10 @@ import TailorMouseCore
 #if !TAILORMOUSE_UI_PREVIEW
 @main
 struct TailorMouseApp: App {
+    @NSApplicationDelegateAdaptor(DockVisibility.self) private var dockVisibility
     @StateObject private var model = AppModel()
     var body: some Scene {
-        WindowGroup("TailorMouse") {
+        WindowGroup("TailorMouse", id: DockVisibility.windowID) {
             ContentView(model: model)
                 .frame(minWidth: 660, minHeight: 490)
                 .onAppear {
@@ -30,14 +31,7 @@ struct TailorMouseApp: App {
             }
         }
         MenuBarExtra("TailorMouse", systemImage: model.isRunning ? "computermouse.fill" : "computermouse") {
-            Text(model.isRunning ? "TailorMouse is running" : "TailorMouse is stopped")
-            Button("Show TailorMouse") {
-                NSApp.activate(ignoringOtherApps: true)
-                NSApp.windows.first { $0.canBecomeMain }?.makeKeyAndOrderFront(nil)
-            }
-            Button("Stop Mouse Handling", action: model.stop).disabled(!model.isRunning)
-            Divider()
-            Button("Quit TailorMouse") { model.stop(); NSApp.terminate(nil) }.keyboardShortcut("q")
+            MenuBarContent(model: model)
         }
     }
     private static func adoptCompactWindowOnce() {
@@ -52,6 +46,45 @@ struct TailorMouseApp: App {
             UserDefaults.standard.set(true, forKey: key)
         }
     }
+}
+
+private struct MenuBarContent: View {
+    @ObservedObject var model: AppModel
+    @Environment(\.openWindow) private var openWindow
+    var body: some View {
+        Text(model.isRunning ? "TailorMouse is running" : "TailorMouse is stopped")
+        Button("Show TailorMouse") {
+            NSApp.unhide(nil)
+            NSApp.setActivationPolicy(.regular)
+            if let window = DockVisibility.mainWindow { window.makeKeyAndOrderFront(nil) } else { openWindow(id: DockVisibility.windowID) }
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        Button("Stop Mouse Handling", action: model.stop).disabled(!model.isRunning)
+        Divider()
+        Button("Quit TailorMouse") { model.stop(); NSApp.terminate(nil) }.keyboardShortcut("q")
+    }
+}
+
+/// The Dock icon follows the editor window. Closing or hiding it leaves
+/// TailorMouse in the menu bar only; handling keeps running either way.
+final class DockVisibility: NSObject, NSApplicationDelegate {
+    static let windowID = "main"
+    static var mainWindow: NSWindow? { NSApp.windows.first { $0.canBecomeMain && $0.title == "TailorMouse" } }
+    private var observer: NSObjectProtocol?
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        observer = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { note in
+            guard let closing = note.object as? NSWindow, closing.canBecomeMain else { return }
+            // willClose fires while the window is still listed.
+            if !NSApp.windows.contains(where: { $0 !== closing && $0.canBecomeMain && $0.isVisible }) {
+                NSApp.setActivationPolicy(.accessory)
+            }
+        }
+    }
+    func applicationDidHide(_ notification: Notification) { NSApp.setActivationPolicy(.accessory) }
+    func applicationDidUnhide(_ notification: Notification) {
+        if Self.mainWindow?.isVisible == true { NSApp.setActivationPolicy(.regular) }
+    }
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 }
 
 #endif
@@ -144,7 +177,7 @@ struct ContentView: View {
                     }.pickerStyle(.segmented).labelsHidden().frame(width: 460).accessibilityLabel("Settings tabs")
                     Group {
                         if tab == .buttons {
-                            ButtonsView(profile: profile, indicators: model.indicators, dpiButtons: model.dpiButtons, dpiEnabled: Binding(get: { model.configuration.remapNagaDPIButtons }, set: { model.setDPIButtonRemapping($0) }), running: model.isRunning, dpiAvailable: (model.configuration.selectedDeviceFamily == nil || model.configuration.selectedDeviceFamily == "razer.naga.pro") && catalog.connections.contains { NagaDPIButton.supports($0.identity) })
+                            ButtonsView(profile: profile, indicators: model.indicators, dpiButtons: model.dpiButtons, dpiEnabled: Binding(get: { model.configuration.remapNagaDPIButtons }, set: { model.setDPIButtonRemapping($0) }), running: model.isRunning, dpiAvailable: catalog.connections.contains { NagaDPIButton.supports($0.identity) && (model.configuration.selectedDeviceFamily ?? $0.identity.canonicalFamily) == $0.identity.canonicalFamily })
                         } else if tab == .chords {
                             ChordsView(profile: profile, indicators: model.indicators, prepareRecording: { if model.isRunning { model.stop() }; catalog.refresh() })
                                 .padding(.horizontal, 12).padding(.bottom, 4)
@@ -333,7 +366,7 @@ private struct ButtonsView: View {
                     .font(.system(size: 10)).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true).foregroundStyle(.secondary)
                 Toggle("Remap DPI buttons", isOn: $dpiEnabled).toggleStyle(.checkbox).font(.system(size: 11))
                     .disabled(running || dpiButtons.busy || !dpiAvailable)
-                    .help("Physical DPI buttons on the original Naga Pro over USB cable or receiver. Stop restores their original assignments.")
+                    .help("Physical DPI buttons on the Naga Pro (USB cable or receiver) and Naga V2 HyperSpeed (receiver). Stop restores their original assignments.")
                 Button("DPI setup…") { showDPISetup = true }.controlSize(.mini)
                     .popover(isPresented: $showDPISetup) {
                         DPIButtonSetupView(dpiButtons: dpiButtons, running: running)
