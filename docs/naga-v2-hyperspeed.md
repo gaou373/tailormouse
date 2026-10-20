@@ -70,3 +70,10 @@ had been observed at that point.
 
 Physical input and reconnect acceptance must be confirmed by the user before
 claiming the mouse is fixed. Builds and automated tests never start remapping.
+
+## User feedback
+
+The user confirmed that bindings appear to work on the HyperSpeed trial.
+Modifier-only Command on Side Button 1 is still under investigation; its saved
+binding is correct and runtime reports paired side-button transitions. Full
+twelve-button and reconnect acceptance remain unverified.
