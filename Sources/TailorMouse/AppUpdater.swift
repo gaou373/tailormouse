@@ -27,7 +27,7 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
         controller.updater.publisher(for: \.canCheckForUpdates).receive(on: RunLoop.main).assign(to: &$available)
         controller.updater.publisher(for: \.automaticallyChecksForUpdates).receive(on: RunLoop.main).assign(to: &$automaticChecks)
         controller.startUpdater()
-        message = "Updates are verified before installation. TailorMouse reopens stopped; your profiles stay on this Mac."
+        message = "Updates are verified before installation. Reopening follows your automatic-start preference; profiles stay on this Mac."
     }
     func checkForUpdates() { controller?.checkForUpdates(nil) }
     func setAutomaticChecks(_ value: Bool) { controller?.updater.automaticallyChecksForUpdates = value }
