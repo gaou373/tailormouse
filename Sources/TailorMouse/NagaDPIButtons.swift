@@ -108,7 +108,7 @@ final class NagaDPIButtons: ObservableObject {
         let mappingVersion: Int?
         func matches(_ session: NagaDPIButtonSession) -> Bool {
             product == session.product && location == session.location && serial == session.serial &&
-            (1...5).contains(profile) && [1,2].contains(mappingVersion ?? 1) && NagaDPIButtonTransaction.validOriginals(originals)
+            (1...5).contains(profile) && (1...NagaDPIButton.mappingVersion).contains(mappingVersion ?? 1) && NagaDPIButtonTransaction.validOriginals(originals)
         }
     }
     private struct Lease { let session: NagaDPIButtonSession; let journal: Journal; let url: URL }
@@ -139,7 +139,7 @@ final class NagaDPIButtons: ObservableObject {
         try recoverExisting(session)
         let profile = try session.activeProfile()
         let originals = try NagaDPIButton.allCases.map { try session.read($0.slot) }
-        let journal = Journal(product: session.product, location: session.location, serial: session.serial, profile: profile, originals: originals, mappingVersion: 2)
+        let journal = Journal(product: session.product, location: session.location, serial: session.serial, profile: profile, originals: originals, mappingVersion: NagaDPIButton.mappingVersion)
         let url = journalURL(session)
         do {
             try NagaDPIButtonTransaction.apply(originals: originals, backup: {

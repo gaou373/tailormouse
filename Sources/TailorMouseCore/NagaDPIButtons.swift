@@ -5,8 +5,11 @@ public enum NagaDPIButton: Int, CaseIterable {
     case up = 112, down = 113
     public var title: String { self == .up ? "DPI Up" : "DPI Down" }
     public var slot: UInt8 { self == .up ? 11 : 12 }
-    public var usage: UInt8 { self == .up ? 0x68 : 0x69 }
-    public var keyCode: UInt16 { self == .up ? 105 : 107 }
+    // F14 is a macOS display-brightness shortcut. Keep transport signals away
+    // from that key rather than suppressing the user's global brightness keys.
+    public var usage: UInt8 { self == .up ? 0x6e : 0x6f } // F19 / F20
+    public var keyCode: UInt16 { self == .up ? 80 : 90 }
+    public static let mappingVersion = 3
     /// Original-Naga physical slot writes/readbacks are verified; Bluetooth is excluded.
     public static let remappingAvailable = true
     public static func supports(_ identity: DeviceIdentity) -> Bool {
@@ -41,6 +44,10 @@ public struct NagaDPIButtonBinding: Codable, Equatable {
     /// 0.4.6 had the physical directions reversed. Recognize its leases for recovery only.
     public static var previousPhysicalTargets: [Self] {
         [Self(slot: 12, block: [2,2,0,0x68,0,0,0]), Self(slot: 11, block: [2,2,0,0x69,0,0,0])]
+    }
+    /// 0.4.7 corrected the direction but still used the brightness-sensitive F14.
+    public static var brightnessPhysicalTargets: [Self] {
+        [Self(slot: 11, block: [2,2,0,0x68,0,0,0]), Self(slot: 12, block: [2,2,0,0x69,0,0,0])]
     }
     /// Historical 0.4.3/0.4.4 wheel assignments, used only to recognize recovery ownership.
     public static var legacyTargets: [Self] {
@@ -107,7 +114,8 @@ public enum NagaDPIButtonTransaction {
     public static func apply(originals: [NagaDPIButtonBinding], backup: () throws -> Void,
                              write: (NagaDPIButtonBinding) throws -> Void) throws {
         guard validOriginals(originals), Set(originals.map(\.slot)) == [11,12] else { throw NagaDPIButtonError.invalid }
-        guard originals.allSatisfy({ !(NagaDPIButtonBinding.targets + NagaDPIButtonBinding.previousPhysicalTargets).contains($0) }) else { throw NagaDPIButtonError.recovery }
+        let known = NagaDPIButtonBinding.targets + NagaDPIButtonBinding.previousPhysicalTargets + NagaDPIButtonBinding.brightnessPhysicalTargets
+        guard originals.allSatisfy({ !known.contains($0) }) else { throw NagaDPIButtonError.recovery }
         try backup()
         var attempted: [UInt8] = []
         do {
@@ -124,11 +132,11 @@ public enum NagaDPIButtonTransaction {
             throw originalError
         }
     }
-    public static func restore(originals: [NagaDPIButtonBinding], physicalMappingVersion: Int = 2, read: (UInt8) throws -> NagaDPIButtonBinding,
+    public static func restore(originals: [NagaDPIButtonBinding], physicalMappingVersion: Int = NagaDPIButton.mappingVersion, read: (UInt8) throws -> NagaDPIButtonBinding,
                                write: (NagaDPIButtonBinding) throws -> Void) throws {
-        guard validOriginals(originals), [1,2].contains(physicalMappingVersion) else { throw NagaDPIButtonError.invalid }
+        guard validOriginals(originals), (1...NagaDPIButton.mappingVersion).contains(physicalMappingVersion) else { throw NagaDPIButtonError.invalid }
         let expected = Set(originals.map(\.slot)) == [9,10] ? NagaDPIButtonBinding.legacyTargets :
-            (physicalMappingVersion == 1 ? NagaDPIButtonBinding.previousPhysicalTargets : NagaDPIButtonBinding.targets)
+            (physicalMappingVersion == 1 ? NagaDPIButtonBinding.previousPhysicalTargets : physicalMappingVersion == 2 ? NagaDPIButtonBinding.brightnessPhysicalTargets : NagaDPIButtonBinding.targets)
         var conflict = false; var failed = false
         for original in originals.reversed() {
             do {

@@ -9,8 +9,8 @@ final class NagaDPIButtonTests: XCTestCase {
         var config = ProfileConfiguration(); config.remapNagaDPIButtons = true
         for (product, transport, expected) in [(0x008f,"USB",true),(0x0090,"USB",true),(0x0092,"Bluetooth Low Energy",false),(0x00a8,"USB",false),(0x008f,"Bluetooth",false)] {
             let identity = DeviceIdentity(vendorID: 0x1532, productID: product, transport: transport, product: "Naga")
-            XCTAssertEqual(config.nagaInputLayout(for: identity).button(for: 105), expected ? 112 : nil)
-            XCTAssertEqual(config.nagaInputLayout(for: identity).button(for: 107), expected ? 113 : nil)
+            XCTAssertEqual(config.nagaInputLayout(for: identity).button(for: 80), expected ? 112 : nil)
+            XCTAssertEqual(config.nagaInputLayout(for: identity).button(for: 90), expected ? 113 : nil)
         }
         XCTAssertFalse(NagaDPIButton.supports(DeviceIdentity(vendorID: 1, productID: 0x008f, transport: "USB", product: "Other")))
     }
@@ -33,14 +33,14 @@ final class NagaDPIButtonTests: XCTestCase {
         let active = original.includingDPIButtons(true)
         XCTAssertEqual(active.button(for: 29), 109)
         XCTAssertEqual(active.sequences, original.sequences)
-        XCTAssertNil(original.button(for: 105))
-        XCTAssertFalse(NagaBluetoothReportDecoder.handles(keyCode: 105, layout: original))
-        XCTAssertTrue(NagaBluetoothReportDecoder.handles(keyCode: 105, layout: active))
+        XCTAssertNil(original.button(for: 80))
+        XCTAssertFalse(NagaBluetoothReportDecoder.handles(keyCode: 80, layout: original))
+        XCTAssertTrue(NagaBluetoothReportDecoder.handles(keyCode: 80, layout: active))
         XCTAssertEqual(original.includingDPIButtons(false), original)
     }
     func testConflictingCalibrationIsRetainedRatherThanReinterpreted() {
-        for layout in [NagaKeyboardLayout(keyOverrides: ["105":100]),
-                       NagaKeyboardLayout(sequences: [NagaKeySequence(button: 110, keyCodes: [18,107])])] {
+        for layout in [NagaKeyboardLayout(keyOverrides: ["80":100]),
+                       NagaKeyboardLayout(sequences: [NagaKeySequence(button: 110, keyCodes: [18,90])])] {
             XCTAssertTrue(layout.hasDPIButtonAliasConflict)
             XCTAssertEqual(layout.includingDPIButtons(true), layout)
         }

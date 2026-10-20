@@ -25,7 +25,7 @@ final class PhysicalDPITransactionTests: XCTestCase {
             writes.append(b.slot); throw NagaDPIButtonError.readback
         })) { XCTAssertEqual($0 as? NagaDPIButtonError, .recovery) }
         XCTAssertEqual(writes, [11,11])
-        for invalid in [[], [originals[0]], [originals[0], originals[0]], NagaDPIButtonBinding.targets, NagaDPIButtonBinding.previousPhysicalTargets,
+        for invalid in [[], [originals[0]], [originals[0], originals[0]], NagaDPIButtonBinding.targets, NagaDPIButtonBinding.previousPhysicalTargets, NagaDPIButtonBinding.brightnessPhysicalTargets,
                         [NagaDPIButtonBinding(slot: 9, block: [1,1,9,0,0,0,0]), NagaDPIButtonBinding(slot: 10, block: [1,1,10,0,0,0,0])]] {
             XCTAssertThrowsError(try NagaDPIButtonTransaction.apply(originals: invalid, backup: { XCTFail("No backup for invalid apply") }, write: { _ in XCTFail("No invalid write") }))
         }
@@ -43,8 +43,8 @@ final class PhysicalDPITransactionTests: XCTestCase {
         XCTAssertEqual(actual[11], originals[0]); XCTAssertEqual(actual[12], originals[1])
         XCTAssertEqual(writes.count, 2)
         try NagaDPIButtonTransaction.apply(originals: originals, backup: {}, write: { actual[$0.slot] = $0 })
-        XCTAssertEqual(actual[11]?.block, [2,2,0,0x68,0,0,0])
-        XCTAssertEqual(actual[12]?.block, [2,2,0,0x69,0,0,0])
+        XCTAssertEqual(actual[11]?.block, [2,2,0,0x6e,0,0,0])
+        XCTAssertEqual(actual[12]?.block, [2,2,0,0x6f,0,0,0])
     }
     func testNewJournalDoesNotMistakeAnExternalOppositeAliasForItsOwnWrite() {
         var actual = Dictionary(uniqueKeysWithValues: NagaDPIButtonBinding.previousPhysicalTargets.map { ($0.slot,$0) })
@@ -57,12 +57,50 @@ final class PhysicalDPITransactionTests: XCTestCase {
         XCTAssertThrowsError(try NagaDPIButtonTransaction.restore(originals: originals, physicalMappingVersion: 99,
             read: { _ in XCTFail("Unknown journal version must not read"); return self.originals[0] }, write: { _ in XCTFail("Unknown journal version must not write") }))
     }
+    func testBrightnessAliasJournalRestoresBeforeNonBrightnessSignalsAreApplied() throws {
+        var actual = Dictionary(uniqueKeysWithValues: NagaDPIButtonBinding.brightnessPhysicalTargets.map { ($0.slot,$0) })
+        try NagaDPIButtonTransaction.restore(originals: originals, physicalMappingVersion: 2,
+            read: { actual[$0]! }, write: { actual[$0.slot] = $0 })
+        XCTAssertEqual(actual[11], originals[0]); XCTAssertEqual(actual[12], originals[1])
+        try NagaDPIButtonTransaction.apply(originals: originals, backup: {}, write: { actual[$0.slot] = $0 })
+        XCTAssertEqual(actual[11]?.block, [2,2,0,0x6e,0,0,0])
+        XCTAssertEqual(actual[12]?.block, [2,2,0,0x6f,0,0,0])
+        try NagaDPIButtonTransaction.restore(originals: originals, physicalMappingVersion: 3,
+            read: { actual[$0]! }, write: { actual[$0.slot] = $0 })
+        XCTAssertEqual(actual[11], originals[0]); XCTAssertEqual(actual[12], originals[1])
+    }
+    func testCurrentJournalCannotRestoreOlderSignalsAndBrightnessKeysAreNotActiveDPIAliases() {
+        for targets in [NagaDPIButtonBinding.previousPhysicalTargets, NagaDPIButtonBinding.brightnessPhysicalTargets] {
+            let actual = Dictionary(uniqueKeysWithValues: targets.map { ($0.slot,$0) })
+            XCTAssertThrowsError(try NagaDPIButtonTransaction.restore(originals: originals, physicalMappingVersion: 3,
+                read: { actual[$0]! }, write: { _ in XCTFail("Older signal is not owned by the current lease") })) {
+                XCTAssertEqual($0 as? NagaDPIButtonError, .conflict)
+            }
+        }
+        let layout = NagaKeyboardLayout().includingDPIButtons(true)
+        for key: UInt16 in [105,107,113] { // F13/F14/F15
+            XCTAssertNil(layout.button(for: key))
+            XCTAssertFalse(NagaBluetoothReportDecoder.handles(keyCode: key, layout: layout))
+        }
+        XCTAssertEqual(NagaDPIButton.mappingVersion, 3)
+    }
+    func testNewDPIHeldSignalReleasesOnEndpointRemovalAndCanPressAgainAfterReconnect() {
+        var reports = NagaBluetoothReportDecoder()
+        let down: [UInt8] = [6,0,0x6f,0,0,0,0,0]
+        XCTAssertEqual(reports.route(reportID: 6, bytes: down, sourceID: 1).map(\.phase), [.down])
+        XCTAssertTrue(reports.route(reportID: 6, bytes: down, sourceID: 1).isEmpty)
+        let released = reports.removeSource(1)
+        XCTAssertEqual(released.map(\.keyCode), [90]); XCTAssertEqual(released.map(\.phase), [.up])
+        XCTAssertTrue(reports.removeSource(1).isEmpty)
+        XCTAssertEqual(reports.route(reportID: 6, bytes: down, sourceID: 2).map(\.phase), [.down])
+        XCTAssertEqual(reports.route(reportID: 6, bytes: [6,0,0,0,0,0,0,0], sourceID: 2).map(\.phase), [.up])
+    }
     func testCorrectedPhysicalSlotsKeepDistinctSavedActionsAndMatchedEdges() {
         let up = ActionBinding(action: .modifierKey, modifierKey: .command)
         let down = ActionBinding(action: .modifierKey, modifierKey: .option)
         let profile = MouseProfile(bindings: ["112":up,"113":down])
         let layout = NagaKeyboardLayout().includingDPIButtons(true)
-        for (slot, usage, keyCode, logical, binding): (UInt8,UInt8,UInt16,Int,ActionBinding) in [(11,0x68,105,112,up),(12,0x69,107,113,down)] {
+        for (slot, usage, keyCode, logical, binding): (UInt8,UInt8,UInt16,Int,ActionBinding) in [(11,0x6e,80,112,up),(12,0x6f,90,113,down)] {
             XCTAssertEqual(NagaDPIButtonBinding.targets.first { $0.slot == slot }?.block, [2,2,0,usage,0,0,0])
             XCTAssertEqual(layout.button(for: keyCode), logical)
             var router = InputRouter()
@@ -100,7 +138,7 @@ final class PhysicalDPITransactionTests: XCTestCase {
         let binding = ActionBinding(action: .modifierKey, modifierKey: .command)
         let profile = MouseProfile(bindings: ["112":binding,"113":binding])
         var emissions = [InputEmission](); var token: UInt64 = 0
-        for usages: [UInt8] in [[0x68], [0x68], [0x68,0x69], [0x69], []] {
+        for usages: [UInt8] in [[0x6e], [0x6e], [0x6e,0x6f], [0x6f], []] {
             let bytes = [UInt8(6),0] + usages + Array(repeating: 0, count: 6-usages.count)
             for edge in reports.route(reportID: 6, bytes: bytes, sourceID: 1) {
                 token += 1

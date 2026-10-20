@@ -227,7 +227,7 @@ final class AppModel: ObservableObject {
         guard !dpiButtons.busy else { status = "Wait for DPI-button setup or recovery to finish, then press Start."; writeRuntimeStatus(); return }
         let nagaUSB = DeviceIdentity(vendorID: 0x1532, productID: 0x0090, transport: "USB", product: "Naga Pro")
         if configuration.remapNagaDPIButtons && (configuration.selectedDeviceFamily == nil || configuration.selectedDeviceFamily == "razer.naga.pro") && configuration.nagaCalibration(for: nagaUSB).hasDPIButtonAliasConflict {
-            status = "USB side-button calibration uses F13/F14. Disable DPI remapping or change that calibration first."
+            status = "USB side-button calibration uses F19/F20. Disable DPI remapping or change that calibration first."
             writeRuntimeStatus(); return
         }
         if indicators.recording { indicators.cancelRecording() }
