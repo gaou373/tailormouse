@@ -56,9 +56,18 @@ private final class NagaDPIButtonSession {
         request[1] = 0x1f; request[5] = 2; request[7] = 0x84
         request[88] = NagaDPIButtonProtocol.checksum(request)
         try send(request)
-        for _ in 0..<6 {
+        var switched = false
+        for _ in 0..<12 {
             usleep(35_000)
             if let b = get(), let normal = try NagaDPIButtonProtocol.normalModeReply(b, product: product) {
+                if !normal, !switched, NagaDPIButtonProtocol.isDriverModeReply(b) {
+                    // Razer's virtual driver leaves the device in driver mode after boot. Live-only; replug resets it.
+                    switched = true
+                    try send(NagaDPIButtonProtocol.setNormalModeRequest)
+                    usleep(60_000)
+                    try send(request)
+                    continue
+                }
                 guard normal else { throw Self.error("DPI-button remapping requires the mouse's normal onboard mode. No mode change was made.") }
                 return
             }
