@@ -1,6 +1,6 @@
 # SteerMouse / Naga Pro investigation
 
-Priority: reverse engineer SteerMouse itself before any fixes or customization. The Naga Pro twelve-button and cross-transport profile issues are motivating questions, not the current implementation task. Further settings changes and custom app development are deferred.
+The initial milestone investigated SteerMouse before fixes or customization. The user subsequently requested an original recreation and installation on 2026-10-11. TailorMouse implements common customization controls; [implementation details and limits](../implementation.md) distinguish its behavior from the target. These research findings remain static evidence, rather than proof of hardware compatibility.
 
 Target: installed SteerMouse 5.8(0920), `/Applications/SteerMouse.app`. REA npm package is pinned to 6.4.0. The supplied upstream repository was inspected at commit `3ad5782dfdc8864879a887dc63fef682ffeb5839`.
 
@@ -12,6 +12,8 @@ Target: installed SteerMouse 5.8(0920), `/Applications/SteerMouse.app`. REA npm 
 - [UI-to-code map](ui-architecture.md): compiled control connections and matching native implementations.
 - [Static binary findings](static-findings.md): target hashes, methods, imported input APIs, Core Data schema and bounded assembly observations.
 - [Naga diagnosis](naga-pro.md): transport identity, driver conflict and profile investigation.
+- [Wired runtime findings](wired-runtime.md): Karabiner attribution conflict, composite interfaces, and captured side-button assignments.
+- [Bluetooth runtime findings](bluetooth-runtime.md): side-button HID reports present without Quartz keyboard events, and the original raw-report path.
 - Raw REA records and native-tool captures are local, ignored files under `.local/evidence/`.
 
 REA inventory observed 175 occurrences and 153 distinct content nodes. The Apple graph recognized the main app and nested login-item manager, with complete coverage within the supplied inventory. The UI decoder read five compiled nib documents (3,783 graph nodes, 2,899 edges). This describes packaged connections; it does not prove runtime button behavior.

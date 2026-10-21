@@ -30,7 +30,7 @@ final class ProfileTests: XCTestCase {
         var wheel = WheelTransformer()
         let slow = MouseProfile(wheelSpeed: 0.25)
         XCTAssertEqual((0..<4).map { _ in wheel.transform([1, 0, 0], continuous: false, profile: slow)[0] }, [0, 0, 0, 1])
-        XCTAssertEqual(wheel.transform([2, -1, 0], continuous: false, profile: MouseProfile(invertWheel: true, wheelSpeed: 2)), [-4, 2, 0])
+        XCTAssertEqual(wheel.transform([2, -1, 0], continuous: false, profile: MouseProfile(invertWheel: true, wheelSpeed: 2)), [-4, -1, 0])
     }
     func testContinuousScrollingPassesThrough() {
         var wheel = WheelTransformer()

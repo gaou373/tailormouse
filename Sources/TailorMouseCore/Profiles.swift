@@ -1,9 +1,115 @@
 import Foundation
 
 public enum ButtonAction: String, Codable, CaseIterable, Identifiable {
-    case passthrough, back, forward, copy, paste
+    case passthrough, disabled, back, forward, copy, paste, cut, undo, redo, selectAll
+    case escape, enter, space, appSwitcher, missionControl, shortcut, mouseClick, scroll
+    case modifierKey
+    case zoomIn, zoomOut, playPause, nextTrack, previousTrack, volumeUp, volumeDown, mute, cursorSnap, open
     public var id: String { rawValue }
-    public var title: String { rawValue.capitalized }
+    public var title: String {
+        switch self {
+        case .modifierKey: return "Modifier Key"
+        case .selectAll: return "Select All"
+        case .appSwitcher: return "App Switcher"
+        case .missionControl: return "Mission Control"
+        case .mouseClick: return "Mouse Click"
+        case .disabled: return "No action"
+        case .zoomIn: return "Zoom In"
+        case .zoomOut: return "Zoom Out"
+        case .playPause: return "Play / Pause"
+        case .nextTrack: return "Next Track"
+        case .previousTrack: return "Previous Track"
+        case .volumeUp: return "Volume Up"
+        case .volumeDown: return "Volume Down"
+        case .cursorSnap: return "Cursor Snapping"
+        default: return rawValue.capitalized
+        }
+    }
+}
+
+public struct ModifierMask: OptionSet, Codable, Equatable, Hashable {
+    public let rawValue: UInt
+    public init(rawValue: UInt) { self.rawValue = rawValue }
+    public static let command = ModifierMask(rawValue: 1)
+    public static let shift = ModifierMask(rawValue: 2)
+    public static let option = ModifierMask(rawValue: 4)
+    public static let control = ModifierMask(rawValue: 8)
+    public var title: String {
+        let labels: [(ModifierMask, String)] = [(.control, "⌃"), (.option, "⌥"), (.shift, "⇧"), (.command, "⌘")]
+        return labels.filter { contains($0.0) }.map { $0.1 }.joined()
+    }
+    public init(from decoder: Decoder) throws { rawValue = try decoder.singleValueContainer().decode(UInt.self) }
+    public func encode(to encoder: Encoder) throws { var container = encoder.singleValueContainer(); try container.encode(rawValue) }
+}
+
+public struct Shortcut: Codable, Equatable {
+    public var keyCode: UInt16
+    public var modifiers: ModifierMask
+    /// F21–F24 have AppKit function characters but no native ADB key code.
+    public var functionKey: Int?
+    public init(keyCode: UInt16, modifiers: ModifierMask = [], functionKey: Int? = nil) {
+        self.keyCode = keyCode; self.modifiers = modifiers; self.functionKey = functionKey
+    }
+}
+
+public enum ShortcutBehavior: String, Codable, CaseIterable, Identifiable {
+    case tap, hold, repeatWhileHeld
+    public var id: String { rawValue }
+    public var title: String {
+        switch self {
+        case .tap: return "Press once"
+        case .hold: return "Hold until release"
+        case .repeatWhileHeld: return "Hold and repeat"
+        }
+    }
+}
+
+public struct ActionBinding: Codable, Equatable {
+    public var action: ButtonAction
+    public var shortcut: Shortcut?
+    public var shortcutBehavior: ShortcutBehavior?
+    public var modifierKey: ModifierKey?
+    public var mouseButton: Int
+    public var scrollX: Int
+    public var scrollY: Int
+    public var openTarget: String?
+    public var snapDestination: String?
+    public init(action: ButtonAction = .passthrough, shortcut: Shortcut? = nil, mouseButton: Int = 0, scrollX: Int = 0, scrollY: Int = 3, openTarget: String? = nil, snapDestination: String? = nil, shortcutBehavior: ShortcutBehavior? = nil, modifierKey: ModifierKey? = nil) {
+        self.action = action; self.shortcut = shortcut; self.mouseButton = mouseButton; self.scrollX = scrollX; self.scrollY = scrollY
+        self.openTarget = openTarget; self.snapDestination = snapDestination
+        self.shortcutBehavior = shortcutBehavior; self.modifierKey = modifierKey
+    }
+    /// Modifier-specific triggers consume their selector keys. Other held
+    /// keyboard modifiers compose with keyboard shortcuts, like a real key.
+    public func inheritingModifiers(_ modifiers: ModifierMask) -> Self {
+        guard action == .shortcut, var shortcut, !modifiers.isEmpty else { return self }
+        var result = self
+        shortcut.modifiers.formUnion(modifiers)
+        result.shortcut = shortcut
+        return result
+    }
+    public var heldShortcut: Shortcut? {
+        if action == .modifierKey { return modifierKey?.shortcut }
+        guard action == .shortcut, let shortcut, shortcut.isValid,
+              shortcutBehavior == .hold || shortcutBehavior == .repeatWhileHeld else { return nil }
+        return shortcut
+    }
+}
+
+public struct ChordBinding: Codable, Equatable, Identifiable {
+    public var id: UUID
+    public var buttons: [Int]
+    public var modifiers: ModifierMask
+    public var binding: ActionBinding
+    public var note: String?
+    public init(id: UUID = UUID(), buttons: [Int], modifiers: ModifierMask = [], binding: ActionBinding, note: String? = nil) {
+        self.id = id; self.buttons = buttons; self.modifiers = modifiers; self.binding = binding; self.note = note
+    }
+    public var isValid: Bool {
+        buttons.count >= 2 && Set(buttons).count == buttons.count &&
+            buttons.filter { WheelDirection(chordInput: $0) != nil }.count <= 1 &&
+            buttons.allSatisfy { (0...31).contains($0) || (100...113).contains($0) || WheelDirection(chordInput: $0) != nil }
+    }
 }
 
 public struct MouseProfile: Codable, Equatable, Identifiable {
@@ -14,32 +120,172 @@ public struct MouseProfile: Codable, Equatable, Identifiable {
     public var wheelSpeed: Double
     public var button3: ButtonAction
     public var button4: ButtonAction
+    public var horizontalWheelSpeed: Double
+    public var invertHorizontalWheel: Bool
+    public var pointerSpeed: Double
+    public var pointerAcceleration: Double?
+    public var pointerSensitivity: Double?
+    public var wheelBindings: [String: ActionBinding]
+    public var bindings: [String: ActionBinding]
+    public var modifierBindings: [String: ActionBinding]
+    public var chords: [ChordBinding]
 
     public init(id: UUID = UUID(), name: String = "Default", bundleIdentifier: String? = nil,
                 invertWheel: Bool = false, wheelSpeed: Double = 1,
-                button3: ButtonAction = .passthrough, button4: ButtonAction = .passthrough) {
-        self.id = id
-        self.name = name
-        self.bundleIdentifier = bundleIdentifier
-        self.invertWheel = invertWheel
-        self.wheelSpeed = wheelSpeed
-        self.button3 = button3
-        self.button4 = button4
+                button3: ButtonAction = .passthrough, button4: ButtonAction = .passthrough,
+                horizontalWheelSpeed: Double = 1, invertHorizontalWheel: Bool = false,
+                pointerSpeed: Double = 1, pointerAcceleration: Double? = nil, pointerSensitivity: Double? = nil,
+                wheelBindings: [String: ActionBinding] = [:], bindings: [String: ActionBinding] = [:],
+                modifierBindings: [String: ActionBinding] = [:], chords: [ChordBinding] = []) {
+        self.id = id; self.name = name; self.bundleIdentifier = bundleIdentifier
+        self.invertWheel = invertWheel; self.wheelSpeed = wheelSpeed
+        self.button3 = button3; self.button4 = button4
+        self.horizontalWheelSpeed = horizontalWheelSpeed; self.invertHorizontalWheel = invertHorizontalWheel
+        self.pointerSpeed = pointerSpeed; self.bindings = bindings; self.modifierBindings = modifierBindings; self.chords = chords
+        self.pointerAcceleration = pointerAcceleration; self.pointerSensitivity = pointerSensitivity; self.wheelBindings = wheelBindings
     }
-
-    public var safeWheelSpeed: Double { wheelSpeed.isFinite ? min(4, max(0.25, wheelSpeed)) : 1 }
-    public func action(for button: Int) -> ButtonAction {
-        button == 3 ? button3 : button == 4 ? button4 : .passthrough
+    private enum CodingKeys: String, CodingKey {
+        case id, name, bundleIdentifier, invertWheel, wheelSpeed, button3, button4
+        case horizontalWheelSpeed, invertHorizontalWheel, pointerSpeed, bindings, modifierBindings, chords
+        case pointerAcceleration, pointerSensitivity, wheelBindings
+    }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(id: try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID(),
+                  name: try c.decodeIfPresent(String.self, forKey: .name) ?? "Default",
+                  bundleIdentifier: try c.decodeIfPresent(String.self, forKey: .bundleIdentifier),
+                  invertWheel: try c.decodeIfPresent(Bool.self, forKey: .invertWheel) ?? false,
+                  wheelSpeed: try c.decodeIfPresent(Double.self, forKey: .wheelSpeed) ?? 1,
+                  button3: try c.decodeIfPresent(ButtonAction.self, forKey: .button3) ?? .passthrough,
+                  button4: try c.decodeIfPresent(ButtonAction.self, forKey: .button4) ?? .passthrough,
+                  horizontalWheelSpeed: try c.decodeIfPresent(Double.self, forKey: .horizontalWheelSpeed) ?? c.decodeIfPresent(Double.self, forKey: .wheelSpeed) ?? 1,
+                  invertHorizontalWheel: try c.decodeIfPresent(Bool.self, forKey: .invertHorizontalWheel) ?? c.decodeIfPresent(Bool.self, forKey: .invertWheel) ?? false,
+                  pointerSpeed: try c.decodeIfPresent(Double.self, forKey: .pointerSpeed) ?? 1,
+                  pointerAcceleration: try c.decodeIfPresent(Double.self, forKey: .pointerAcceleration),
+                  pointerSensitivity: try c.decodeIfPresent(Double.self, forKey: .pointerSensitivity),
+                  wheelBindings: try c.decodeIfPresent([String: ActionBinding].self, forKey: .wheelBindings) ?? [:],
+                  bindings: try c.decodeIfPresent([String: ActionBinding].self, forKey: .bindings) ?? [:],
+                  modifierBindings: try c.decodeIfPresent([String: ActionBinding].self, forKey: .modifierBindings) ?? [:],
+                  chords: try c.decodeIfPresent([ChordBinding].self, forKey: .chords) ?? [])
+    }
+    private func safeSpeed(_ value: Double) -> Double { value.isFinite ? min(4, max(0.25, value)) : 1 }
+    public var safeWheelSpeed: Double { safeSpeed(wheelSpeed) }
+    public var safeHorizontalWheelSpeed: Double { safeSpeed(horizontalWheelSpeed) }
+    public var safePointerSpeed: Double { safeSpeed(pointerSpeed) }
+    public func actionBinding(for button: Int, modifiers: ModifierMask = []) -> ActionBinding {
+        guard (0...31).contains(button) || (100...113).contains(button) else { return ActionBinding() }
+        if let binding = modifierBindings["\(button):\(modifiers.rawValue)"] { return binding }
+        if let binding = bindings[String(button)] { return binding }
+        // The Naga panel emits keyboard keys. Unassigned slots consume both
+        // transitions while running; explicit Passthrough retains native typing.
+        if (100...113).contains(button) { return ActionBinding(action: .disabled) }
+        return ActionBinding(action: button == 3 ? button3 : button == 4 ? button4 : .passthrough)
+    }
+    public func outputBinding(for button: Int, modifiers: ModifierMask = []) -> ActionBinding {
+        let inherited: ModifierMask = modifierBindings["\(button):\(modifiers.rawValue)"] == nil ? modifiers : []
+        return actionBinding(for: button, modifiers: modifiers).inheritingModifiers(inherited)
+    }
+    public func action(for button: Int) -> ButtonAction { actionBinding(for: button).action }
+    public func wheelBinding(direction: WheelDirection, modifiers: ModifierMask = []) -> ActionBinding {
+        wheelBindings["\(direction.rawValue):\(modifiers.rawValue)"] ?? wheelBindings[direction.rawValue]
+            ?? ActionBinding(action: .passthrough, scrollX: direction.axis == 1 ? direction.sign * 3 : 0,
+                             scrollY: direction.axis == 0 ? direction.sign * 3 : 0)
+    }
+    public func wheelOutputBinding(direction: WheelDirection, modifiers: ModifierMask = []) -> ActionBinding {
+        let inherited: ModifierMask = wheelBindings["\(direction.rawValue):\(modifiers.rawValue)"] == nil ? modifiers : []
+        return wheelBinding(direction: direction, modifiers: modifiers).inheritingModifiers(inherited)
+    }
+    public mutating func swapWheelBindings(horizontal: Bool, modifiers: ModifierMask = []) {
+        let first: WheelDirection = horizontal ? .left : .up
+        let second: WheelDirection = horizontal ? .right : .down
+        // Snapshot the displayed assignments before writing either override.
+        // Inherited mappings become explicit only for this modifier selection.
+        let firstBinding = wheelBinding(direction: first, modifiers: modifiers)
+        let secondBinding = wheelBinding(direction: second, modifiers: modifiers)
+        func key(_ direction: WheelDirection) -> String {
+            modifiers.isEmpty ? direction.rawValue : "\(direction.rawValue):\(modifiers.rawValue)"
+        }
+        if modifiers.isEmpty {
+            wheelBindings.removeValue(forKey: "\(first.rawValue):0")
+            wheelBindings.removeValue(forKey: "\(second.rawValue):0")
+        }
+        wheelBindings[key(first)] = secondBinding
+        wheelBindings[key(second)] = firstBinding
+    }
+    public func inheritedProfile(name: String, bundleIdentifier: String) -> MouseProfile {
+        var profile = self; profile.id = UUID(); profile.name = name; profile.bundleIdentifier = bundleIdentifier; return profile
     }
 }
 
 public struct ProfileConfiguration: Codable, Equatable {
-    public var schemaVersion = 1
+    public var schemaVersion = 3
     public var defaultProfile: MouseProfile
     public var appProfiles: [MouseProfile]
-    public init(defaultProfile: MouseProfile = MouseProfile(), appProfiles: [MouseProfile] = []) {
-        self.defaultProfile = defaultProfile
-        self.appProfiles = appProfiles
+    public var selectedDeviceFamily: String?
+    public var autoStartOnOpen = true
+    public var remapNagaDPIButtons = false
+    public var nagaKeyboardLayouts: [String: NagaKeyboardLayout]
+    public var nagaWiredTrackingReference: NativePointerValues?
+    public var cursorTracking: CursorTrackingSettings
+    public init(defaultProfile: MouseProfile = MouseProfile(), appProfiles: [MouseProfile] = [], selectedDeviceFamily: String? = "razer.naga.pro", nagaKeyboardLayouts: [String: NagaKeyboardLayout] = [:], nagaWiredTrackingReference: NativePointerValues? = nil, cursorTracking: CursorTrackingSettings? = nil) {
+        self.defaultProfile = defaultProfile; self.appProfiles = appProfiles; self.selectedDeviceFamily = selectedDeviceFamily
+        self.nagaKeyboardLayouts = nagaKeyboardLayouts
+        self.nagaWiredTrackingReference = nagaWiredTrackingReference
+        self.cursorTracking = cursorTracking ?? CursorTrackingSettings(acceleration: defaultProfile.pointerAcceleration, sensitivity: defaultProfile.pointerSensitivity)
+    }
+    private enum CodingKeys: String, CodingKey { case schemaVersion, defaultProfile, appProfiles, selectedDeviceFamily, nagaKeyboardLayouts, nagaWiredTrackingReference, cursorTracking, autoStartOnOpen; case remapNagaDPIButtons = "remapPhysicalNagaDPIButtons" }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let version = try c.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+        guard (1...3).contains(version) else { throw DecodingError.dataCorruptedError(forKey: .schemaVersion, in: c, debugDescription: "Unsupported profile version \(version)") }
+        defaultProfile = try c.decodeIfPresent(MouseProfile.self, forKey: .defaultProfile) ?? MouseProfile()
+        appProfiles = try c.decodeIfPresent([MouseProfile].self, forKey: .appProfiles) ?? []
+        selectedDeviceFamily = c.contains(.selectedDeviceFamily) ? try c.decodeIfPresent(String.self, forKey: .selectedDeviceFamily) : "razer.naga.pro"
+        autoStartOnOpen = try c.decodeIfPresent(Bool.self, forKey: .autoStartOnOpen) ?? true
+        remapNagaDPIButtons = try c.decodeIfPresent(Bool.self, forKey: .remapNagaDPIButtons) ?? false
+        nagaKeyboardLayouts = try c.decodeIfPresent([String: NagaKeyboardLayout].self, forKey: .nagaKeyboardLayouts) ?? [:]
+        nagaWiredTrackingReference = try c.decodeIfPresent(NativePointerValues.self, forKey: .nagaWiredTrackingReference)
+        guard nagaWiredTrackingReference?.isValidReference ?? true else {
+            throw DecodingError.dataCorruptedError(forKey: .nagaWiredTrackingReference, in: c, debugDescription: "Invalid wired tracking reference")
+        }
+        guard nagaKeyboardLayouts.values.allSatisfy(\.isValid) else {
+            throw DecodingError.dataCorruptedError(forKey: .nagaKeyboardLayouts, in: c, debugDescription: "Invalid Naga keyboard calibration")
+        }
+        if version == 3 {
+            cursorTracking = try c.decode(CursorTrackingSettings.self, forKey: .cursorTracking)
+        } else {
+            cursorTracking = CursorTrackingSettings(acceleration: defaultProfile.pointerAcceleration, sensitivity: defaultProfile.pointerSensitivity)
+        }
+        guard cursorTracking.isValid else {
+            throw DecodingError.dataCorruptedError(forKey: .cursorTracking, in: c, debugDescription: "Invalid shared cursor tracking")
+        }
+        schemaVersion = 3
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(3, forKey: .schemaVersion)
+        try c.encode(defaultProfile, forKey: .defaultProfile)
+        try c.encode(appProfiles, forKey: .appProfiles)
+        try c.encode(cursorTracking, forKey: .cursorTracking)
+        try c.encode(autoStartOnOpen, forKey: .autoStartOnOpen)
+        try c.encode(remapNagaDPIButtons, forKey: .remapNagaDPIButtons)
+        try c.encode(nagaKeyboardLayouts, forKey: .nagaKeyboardLayouts)
+        try c.encodeIfPresent(nagaWiredTrackingReference, forKey: .nagaWiredTrackingReference)
+        if let selectedDeviceFamily { try c.encode(selectedDeviceFamily, forKey: .selectedDeviceFamily) }
+        else { try c.encodeNil(forKey: .selectedDeviceFamily) }
+    }
+    public static func nagaCalibrationKey(family: String, transport: String) -> String { "\(family)|\(transport)" }
+    public static func nagaCalibrationTitle(_ key: String) -> String {
+        let parts = key.split(separator: "|", maxSplits: 1).map(String.init)
+        return parts.count == 2 ? "\(DeviceIdentity.title(forFamily: parts[0])) · \(parts[1])" : "Razer Naga Pro · \(key)"
+    }
+    public func nagaCalibration(for identity: DeviceIdentity) -> NagaKeyboardLayout {
+        nagaKeyboardLayouts[Self.nagaCalibrationKey(family: identity.canonicalFamily, transport: identity.transport)]
+            ?? (identity.canonicalFamily == "razer.naga.pro" ? nagaKeyboardLayouts[identity.transport] : nil)
+            ?? NagaKeyboardLayout()
+    }
+    public func nagaInputLayout(for identity: DeviceIdentity) -> NagaKeyboardLayout {
+        nagaCalibration(for: identity).includingDPIButtons(remapNagaDPIButtons && NagaDPIButton.supports(identity))
     }
     public func profile(for bundleIdentifier: String?) -> MouseProfile {
         guard let bundleIdentifier else { return defaultProfile }
@@ -61,10 +307,8 @@ public struct ButtonPairRouter {
     public mutating func route(button: Int, phase: ButtonPhase, profile: MouseProfile) -> ButtonDecision {
         switch phase {
         case .down:
-            // Repeated downs must not emit another shortcut or change the pair's decision.
             if let action = active[button] { return ButtonDecision(suppress: action != .passthrough, emit: nil) }
-            let action = profile.action(for: button)
-            active[button] = action
+            let action = profile.action(for: button); active[button] = action
             return ButtonDecision(suppress: action != .passthrough, emit: action == .passthrough ? nil : action)
         case .up:
             let action = active.removeValue(forKey: button) ?? .passthrough
@@ -75,22 +319,47 @@ public struct ButtonPairRouter {
     }
 }
 
-/// Carries fractions between wheel ticks, so speeds below 1 do not discard every tick.
+/// Carries fractions between wheel ticks and resets them when the corresponding axis settings change.
 public struct WheelTransformer {
     private var remainder = [Double](repeating: 0, count: 3)
-    private var previousFactor: Double?
+    private var previousFactors: [Double]?
     public init() {}
-    public mutating func reset() { remainder = [0, 0, 0]; previousFactor = nil }
+    public mutating func reset() { remainder = [0, 0, 0]; previousFactors = nil }
     public mutating func transform(_ deltas: [Int64], continuous: Bool, profile: MouseProfile) -> [Int64] {
         guard !continuous else { return deltas }
-        let factor = profile.safeWheelSpeed * (profile.invertWheel ? -1 : 1)
-        if factor != previousFactor { remainder = [0, 0, 0]; previousFactor = factor }
+        let factors = [profile.safeWheelSpeed * (profile.invertWheel ? -1 : 1), profile.safeHorizontalWheelSpeed * (profile.invertHorizontalWheel ? -1 : 1), 1]
+        for axis in 0..<3 where previousFactors?[axis] != factors[axis] { remainder[axis] = 0 }
+        previousFactors = factors
         return deltas.enumerated().map { axis, delta in
             guard axis < remainder.count else { return delta }
-            let total = Double(delta) * factor + remainder[axis]
-            let result = total.rounded(.towardZero)
-            remainder[axis] = total - result
-            return Int64(clamping: Int(result))
+            return scaledInteger(delta, factor: factors[axis], remainder: &remainder[axis])
         }
+    }
+}
+
+private func scaledInteger(_ delta: Int64, factor: Double, remainder: inout Double) -> Int64 {
+    let total = Double(delta) * factor + remainder
+    guard total < Double(Int64.max) else { remainder = 0; return Int64.max }
+    guard total > Double(Int64.min) else { remainder = 0; return Int64.min }
+    let result = total.rounded(.towardZero); remainder = total - result
+    return Int64(result)
+}
+
+public struct PointerTransformer {
+    private var remainder = [Double](repeating: 0, count: 2)
+    private var previousFactor: Double?
+    private var previousProfileID: UUID?
+    public init() {}
+    public mutating func reset() { remainder = [0, 0]; previousFactor = nil; previousProfileID = nil }
+    public mutating func transform(_ deltas: [Int64], profile: MouseProfile) -> [Int64] {
+        let factor = profile.safePointerSpeed
+        if previousFactor != factor || previousProfileID != profile.id { remainder = [0, 0]; previousFactor = factor; previousProfileID = profile.id }
+        return deltas.enumerated().map { axis, delta in
+            guard axis < 2 else { return delta }
+            return scaledInteger(delta, factor: factor, remainder: &remainder[axis])
+        }
+    }
+    public mutating func transform(dx: Int64, dy: Int64, profile: MouseProfile) -> (dx: Int64, dy: Int64) {
+        let result = transform([dx, dy], profile: profile); return (result[0], result[1])
     }
 }
