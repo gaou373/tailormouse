@@ -123,6 +123,37 @@ final class PhysicalDPITransactionTests: XCTestCase {
         XCTAssertEqual(try NagaDPIButtonProtocol.activeProfileReply(profileReply(status: 2), product: 0x0090), 1)
         XCTAssertNil(try NagaDPIButtonProtocol.activeProfileReply(profileReply(status: 2, profile: 0), product: 0x0090))
     }
+    private func modeReply(status: UInt8, mode: UInt8 = 0) -> [UInt8] {
+        var bytes = [UInt8](repeating: 0, count: 90)
+        bytes[0] = status; bytes[1] = 0x1f; bytes[5] = 2; bytes[7] = 0x84; bytes[8] = mode
+        bytes[88] = NagaDPIButtonProtocol.checksum(bytes); return bytes
+    }
+    func testHyperSpeedUsesModeReplyForLivenessAndReceiverTimeout() throws {
+        // Observed 2026-10-20: HyperSpeed answers mode 02…00 84 00 00 and rejects 05/84 with status 3.
+        XCTAssertNil(try NagaDPIButtonProtocol.activeProfileReply(profileReply(status: 3, profile: 0), product: 0x00b4))
+        XCTAssertEqual(try NagaDPIButtonProtocol.normalModeReply(modeReply(status: 2), product: 0x00b4), true)
+        XCTAssertEqual(try NagaDPIButtonProtocol.normalModeReply(modeReply(status: 2, mode: 3), product: 0x00b4), false)
+        XCTAssertThrowsError(try NagaDPIButtonProtocol.normalModeReply(modeReply(status: 4), product: 0x00b4)) { XCTAssertEqual($0 as? NagaDPIButtonError, .receiverUnavailable) }
+        XCTAssertThrowsError(try NagaDPIButtonProtocol.activeProfileReply(profileReply(status: 4), product: 0x00b4)) { XCTAssertEqual($0 as? NagaDPIButtonError, .receiverUnavailable) }
+        XCTAssertNil(try NagaDPIButtonProtocol.normalModeReply(modeReply(status: 4), product: 0x008f))
+        for status: UInt8 in [0,1,3,5] { XCTAssertNil(try NagaDPIButtonProtocol.normalModeReply(modeReply(status: status), product: 0x00b4)) }
+        var corrupt = modeReply(status: 2); corrupt[7] = 0x85
+        XCTAssertNil(try NagaDPIButtonProtocol.normalModeReply(corrupt, product: 0x00b4))
+    }
+    func testHyperSpeedFactoryDPIBlocksAreRestorableOriginals() throws {
+        // Factory slot 11/12 blocks read from the receiver: DPI stage up / down.
+        let originals = [NagaDPIButtonBinding(slot: 11, block: [6,1,1,0,0,0,0]), NagaDPIButtonBinding(slot: 12, block: [6,1,2,0,0,0,0])]
+        XCTAssertTrue(NagaDPIButtonTransaction.validOriginals(originals))
+        var reply = [UInt8](repeating: 0, count: 90)
+        reply[0] = 2; reply[1] = 0x1f; reply[5] = 10; reply[6] = 2; reply[7] = 0x8c; reply[9] = 11
+        reply.replaceSubrange(11..<18, with: originals[0].block); reply[88] = NagaDPIButtonProtocol.checksum(reply)
+        XCTAssertEqual(try NagaDPIButtonProtocol.parse(reply, slot: 11), originals[0])
+        var device = Dictionary(uniqueKeysWithValues: originals.map { ($0.slot, $0) })
+        try NagaDPIButtonTransaction.apply(originals: originals, backup: {}, write: { device[$0.slot] = $0 })
+        XCTAssertEqual(Set(device.values.map(\.block[3])), [0x6e, 0x6f])
+        try NagaDPIButtonTransaction.restore(originals: originals, read: { device[$0]! }, write: { device[$0.slot] = $0 })
+        XCTAssertEqual(device[11], originals[0]); XCTAssertEqual(device[12], originals[1])
+    }
     func testUnrelatedOrCorruptReplyCannotBeMisclassifiedAsReceiverTimeout() throws {
         let valid = profileReply(status: 4)
         for index in [1,6,7,88,89] {

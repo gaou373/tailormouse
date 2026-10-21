@@ -10,11 +10,22 @@ public enum NagaDPIButton: Int, CaseIterable {
     public var usage: UInt8 { self == .up ? 0x6e : 0x6f } // F19 / F20
     public var keyCode: UInt16 { self == .up ? 80 : 90 }
     public static let mappingVersion = 3
-    /// Original-Naga physical slot writes/readbacks are verified; Bluetooth is excluded.
+    /// Original Naga Pro (cable/receiver) and Naga V2 HyperSpeed receiver slot
+    /// writes/readbacks are verified; Bluetooth is excluded.
     public static let remappingAvailable = true
+    public static let products = [0x008f, 0x0090, 0x00b4]
+    public static let receiverProducts = [0x0090, 0x00b4]
+    public static let families = ["razer.naga.pro", "razer.naga.v2.hyperspeed"]
     public static func supports(_ identity: DeviceIdentity) -> Bool {
-        identity.vendorID == 0x1532 && [0x008f, 0x0090].contains(identity.productID) && identity.transport.lowercased() == "usb"
+        identity.vendorID == 0x1532 && products.contains(identity.productID) && identity.transport.lowercased() == "usb"
     }
+    /// `nil` selects every mouse.
+    public static func supports(family: String?) -> Bool { family.map(families.contains) ?? true }
+    /// The HyperSpeed rejects the active-profile query (status 3) and has no
+    /// profile selection to guard; its liveness is checked with the mode query.
+    public static func reportsActiveProfile(product: Int) -> Bool { product != 0x00b4 }
+    /// Journal value for devices without a reported onboard profile.
+    public static let fixedProfile: UInt8 = 1
 }
 
 public extension NagaKeyboardLayout {
@@ -75,9 +86,17 @@ public enum NagaDPIButtonProtocol {
     public static func activeProfileReply(_ bytes: [UInt8], product: Int) throws -> UInt8? {
         guard bytes.count == 90, bytes[1] == 0x1f, bytes[6] == 5, bytes[7] == 0x84,
               bytes[88] == checksum(bytes), bytes[89] == 0 else { return nil }
-        if product == 0x0090 && bytes[0] == 4 { throw NagaDPIButtonError.receiverUnavailable }
+        if NagaDPIButton.receiverProducts.contains(product) && bytes[0] == 4 { throw NagaDPIButtonError.receiverUnavailable }
         guard bytes[0] == 2, (1...5).contains(bytes[8]) else { return nil }
         return bytes[8]
+    }
+    /// Device-mode reply (class 0, command 0x84). `true` only for normal mode.
+    public static func normalModeReply(_ bytes: [UInt8], product: Int) throws -> Bool? {
+        guard bytes.count == 90, bytes[1] == 0x1f, bytes[5] == 2, bytes[6] == 0, bytes[7] == 0x84,
+              bytes[88] == checksum(bytes), bytes[89] == 0 else { return nil }
+        if NagaDPIButton.receiverProducts.contains(product) && bytes[0] == 4 { throw NagaDPIButtonError.receiverUnavailable }
+        guard bytes[0] == 2 else { return nil }
+        return bytes[8] == 0 && bytes[9] == 0
     }
     public static func checksum(_ bytes: [UInt8]) -> UInt8 { bytes[2..<88].reduce(0, ^) }
     public static func read(slot: UInt8) throws -> [UInt8] {

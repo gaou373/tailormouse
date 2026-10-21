@@ -18,9 +18,12 @@ final class NagaHyperSpeedTests: XCTestCase {
             XCTAssertFalse(identity.supportsNagaKeyboard)
             XCTAssertNil(NagaKeyboardReportFormat(identity: identity))
         }
-        XCTAssertFalse(NagaDPIButton.supports(mouse))
+        XCTAssertTrue(NagaDPIButton.supports(mouse))
+        XCTAssertTrue(NagaDPIButton.supports(family: mouse.canonicalFamily))
+        XCTAssertFalse(NagaDPIButton.reportsActiveProfile(product: 0x00b4))
         var bluetooth = mouse; bluetooth.transport = "Bluetooth Low Energy"
         XCTAssertNil(NagaKeyboardReportFormat(identity: bluetooth))
+        XCTAssertFalse(NagaDPIButton.supports(bluetooth))
     }
     func testBothDescriptorBackedInterfacesAreRecognizedAndMalformedReportsRejected() {
         XCTAssertEqual(NagaKeyboardReportFormat.select(identity: mouse, keyboardReportIDs: [0]), .usbBoot)

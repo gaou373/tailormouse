@@ -225,8 +225,11 @@ final class AppModel: ObservableObject {
 
     func start() {
         guard !dpiButtons.busy else { status = "Wait for DPI-button setup or recovery to finish, then press Start."; writeRuntimeStatus(); return }
-        let nagaUSB = DeviceIdentity(vendorID: 0x1532, productID: 0x0090, transport: "USB", product: "Naga Pro")
-        if configuration.remapNagaDPIButtons && (configuration.selectedDeviceFamily == nil || configuration.selectedDeviceFamily == "razer.naga.pro") && configuration.nagaCalibration(for: nagaUSB).hasDPIButtonAliasConflict {
+        let family = configuration.selectedDeviceFamily
+        let dpiFamily = configuration.remapNagaDPIButtons && NagaDPIButton.supports(family: family)
+        let usbMice = [0x0090, 0x00b4].map { DeviceIdentity(vendorID: 0x1532, productID: $0, transport: "USB", product: "Naga") }
+            .filter { family == nil || family == $0.canonicalFamily }
+        if dpiFamily && usbMice.contains(where: { configuration.nagaCalibration(for: $0).hasDPIButtonAliasConflict }) {
             status = "USB side-button calibration uses F19/F20. Disable DPI remapping or change that calibration first."
             writeRuntimeStatus(); return
         }
@@ -239,7 +242,7 @@ final class AppModel: ObservableObject {
         }
         if let error = interceptor.start() { status = error; writeRuntimeStatus(); return }
         isRunning = true
-        if configuration.remapNagaDPIButtons && (configuration.selectedDeviceFamily == nil || configuration.selectedDeviceFamily == "razer.naga.pro") { dpiButtons.start() }
+        if dpiFamily { dpiButtons.start() }
         pointer.start()
         guard isRunning else { return }
         sideButtonDownEvents.removeAll(); sideButtonUpEvents.removeAll()

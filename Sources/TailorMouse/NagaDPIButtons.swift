@@ -18,7 +18,7 @@ private final class NagaDPIButtonSession {
     static func discover(existing: [UInt64: NagaDPIButtonSession] = [:]) throws -> [NagaDPIButtonSession] {
         guard CGPreflightListenEventAccess() else { throw error("Input Monitoring approval is needed for DPI-button remapping.") }
         let manager = IOHIDManagerCreate(kCFAllocatorDefault, 0)
-        IOHIDManagerSetDeviceMatchingMultiple(manager, [0x008f, 0x0090].map {
+        IOHIDManagerSetDeviceMatchingMultiple(manager, NagaDPIButton.products.map {
             [kIOHIDVendorIDKey: 0x1532, kIOHIDProductIDKey: $0]
         } as CFArray)
         let devices = (IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice>) ?? []
@@ -58,15 +58,18 @@ private final class NagaDPIButtonSession {
         try send(request)
         for _ in 0..<6 {
             usleep(35_000)
-            if let b = get(), b[0] == 2, b[1] == 0x1f, b[5] == 2, b[6] == 0, b[7] == 0x84,
-               b[88] == NagaDPIButtonProtocol.checksum(b), b[89] == 0 {
-                guard b[8] == 0, b[9] == 0 else { throw Self.error("DPI-button remapping requires the mouse's normal onboard mode. No mode change was made.") }
+            if let b = get(), let normal = try NagaDPIButtonProtocol.normalModeReply(b, product: product) {
+                guard normal else { throw Self.error("DPI-button remapping requires the mouse's normal onboard mode. No mode change was made.") }
                 return
             }
         }
         throw Self.error("The Naga onboard mode could not be verified.")
     }
     func activeProfile() throws -> UInt8 {
+        guard NagaDPIButton.reportsActiveProfile(product: product) else {
+            // Also detects an idle receiver whose mouse is off.
+            try requireNormalMode(); return NagaDPIButton.fixedProfile
+        }
         var request = [UInt8](repeating: 0, count: 90)
         request[1] = 0x1f; request[5] = 1; request[6] = 5; request[7] = 0x84
         request[88] = NagaDPIButtonProtocol.checksum(request)
@@ -99,7 +102,7 @@ private final class NagaDPIButtonSession {
 /// product/location/serial/profile and restores only blocks still owned by us.
 final class NagaDPIButtons: ObservableObject {
     var hardwareEnabled = true
-    @Published private(set) var message = "Enable while stopped, then start handling. Physical DPI Up/Down use your mappings over USB cable or receiver."
+    @Published private(set) var message = "Enable while stopped, then start handling. Physical DPI Up/Down use your mappings over USB cable or receiver (Naga Pro, Naga V2 HyperSpeed)."
     @Published private(set) var busy = false
     var failed: (String) -> Void = { _ in }
     private struct Journal: Codable {
@@ -192,7 +195,7 @@ final class NagaDPIButtons: ObservableObject {
                 }
                 let message: String
                 if self.leases.isEmpty {
-                    message = waitingReceivers > 0 ? "Receiver connected; waiting for its mouse. DPI mappings will resume when it reconnects." : "Connect a Naga Pro by USB cable or receiver. Bluetooth DPI-button remapping is unavailable."
+                    message = waitingReceivers > 0 ? "Receiver connected; waiting for its mouse. DPI mappings will resume when it reconnects." : "Connect a Naga Pro by USB cable or receiver, or a Naga V2 HyperSpeed receiver. Bluetooth DPI-button remapping is unavailable."
                 } else {
                     message = "DPI Up and DPI Down are ready. Stop restores the original assignments." + (waitingReceivers > 0 ? " The idle receiver is waiting for its mouse." : "")
                 }
