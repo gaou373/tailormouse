@@ -133,6 +133,9 @@ final class PhysicalDPITransactionTests: XCTestCase {
         XCTAssertNil(try NagaDPIButtonProtocol.activeProfileReply(profileReply(status: 3, profile: 0), product: 0x00b4))
         XCTAssertEqual(try NagaDPIButtonProtocol.normalModeReply(modeReply(status: 2), product: 0x00b4), true)
         XCTAssertEqual(try NagaDPIButtonProtocol.normalModeReply(modeReply(status: 2, mode: 3), product: 0x00b4), false)
+        XCTAssertTrue(NagaDPIButtonProtocol.isDriverModeReply(modeReply(status: 2, mode: 3)))
+        XCTAssertFalse(NagaDPIButtonProtocol.isDriverModeReply(modeReply(status: 2)))
+        XCTAssertEqual(Array(NagaDPIButtonProtocol.setNormalModeRequest[5...7]), [2, 0, 0x04])
         XCTAssertThrowsError(try NagaDPIButtonProtocol.normalModeReply(modeReply(status: 4), product: 0x00b4)) { XCTAssertEqual($0 as? NagaDPIButtonError, .receiverUnavailable) }
         XCTAssertThrowsError(try NagaDPIButtonProtocol.activeProfileReply(profileReply(status: 4), product: 0x00b4)) { XCTAssertEqual($0 as? NagaDPIButtonError, .receiverUnavailable) }
         XCTAssertNil(try NagaDPIButtonProtocol.normalModeReply(modeReply(status: 4), product: 0x008f))

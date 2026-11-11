@@ -98,6 +98,13 @@ public enum NagaDPIButtonProtocol {
         guard bytes[0] == 2 else { return nil }
         return bytes[8] == 0 && bytes[9] == 0
     }
+    /// A driver-mode device-mode reply (`03 00`), as left by Razer's virtual driver after boot.
+    public static func isDriverModeReply(_ bytes: [UInt8]) -> Bool {
+        bytes.count == 90 && bytes[0] == 2 && bytes[1] == 0x1f && bytes[5] == 2 && bytes[6] == 0 && bytes[7] == 0x84 &&
+            bytes[88] == checksum(bytes) && bytes[89] == 0 && bytes[8] == 3 && bytes[9] == 0
+    }
+    /// Live-only request (class 0, command 0x04) returning the device to normal mode `00 00`.
+    public static let setNormalModeRequest: [UInt8] = packet(command: 0x04, size: 2, commandClass: 0, arguments: [0, 0])
     public static func checksum(_ bytes: [UInt8]) -> UInt8 { bytes[2..<88].reduce(0, ^) }
     public static func read(slot: UInt8) throws -> [UInt8] {
         guard [UInt8(9), 10, 11, 12].contains(slot) else { throw NagaDPIButtonError.invalid }
@@ -107,10 +114,10 @@ public enum NagaDPIButtonProtocol {
         guard binding.isValid, !NagaDPIButtonBinding.legacyTargets.contains(binding) else { throw NagaDPIButtonError.invalid }
         return packet(command: 0x0c, arguments: [0, binding.slot, 0] + binding.block)
     }
-    private static func packet(command: UInt8, arguments: [UInt8]) -> [UInt8] {
+    private static func packet(command: UInt8, size: UInt8 = 10, commandClass: UInt8 = 2, arguments: [UInt8]) -> [UInt8] {
         var bytes = [UInt8](repeating: 0, count: 90)
-        bytes[1] = 0x1f; bytes[5] = 10; bytes[6] = 2; bytes[7] = command
-        bytes.replaceSubrange(8..<18, with: arguments); bytes[88] = checksum(bytes)
+        bytes[1] = 0x1f; bytes[5] = size; bytes[6] = commandClass; bytes[7] = command
+        bytes.replaceSubrange(8..<(8 + arguments.count), with: arguments); bytes[88] = checksum(bytes)
         return bytes
     }
     public static func parse(_ bytes: [UInt8], slot: UInt8) throws -> NagaDPIButtonBinding {

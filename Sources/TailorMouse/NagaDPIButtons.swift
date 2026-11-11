@@ -55,14 +55,26 @@ private final class NagaDPIButtonSession {
         var request = [UInt8](repeating: 0, count: 90)
         request[1] = 0x1f; request[5] = 2; request[7] = 0x84
         request[88] = NagaDPIButtonProtocol.checksum(request)
-        try send(request)
-        for _ in 0..<6 {
+        do { try send(request) }
+        catch where NagaDPIButton.receiverProducts.contains(product) { throw NagaDPIButtonError.receiverUnavailable }
+        var switched = false
+        for _ in 0..<12 {
             usleep(35_000)
             if let b = get(), let normal = try NagaDPIButtonProtocol.normalModeReply(b, product: product) {
+                if !normal, !switched, NagaDPIButtonProtocol.isDriverModeReply(b) {
+                    // Razer's virtual driver leaves the device in driver mode after boot. Live-only; replug resets it.
+                    switched = true
+                    try send(NagaDPIButtonProtocol.setNormalModeRequest)
+                    usleep(60_000)
+                    try send(request)
+                    continue
+                }
                 guard normal else { throw Self.error("DPI-button remapping requires the mouse's normal onboard mode. No mode change was made.") }
                 return
             }
         }
+        // A receiver whose mouse sleeps can stop answering instead of reporting status 4.
+        if NagaDPIButton.receiverProducts.contains(product) { throw NagaDPIButtonError.receiverUnavailable }
         throw Self.error("The Naga onboard mode could not be verified.")
     }
     func activeProfile() throws -> UInt8 {
@@ -117,6 +129,7 @@ final class NagaDPIButtons: ObservableObject {
     private struct Lease { let session: NagaDPIButtonSession; let journal: Journal; let url: URL }
     private let queue = NagaControlQueue.shared
     private var leases: [UInt64: Lease] = [:] // queue confined
+    private var sleeping: Set<UInt64> = [] // queue confined
     private var timer: Timer?
     private var active = false
     private var generation = 0
@@ -130,6 +143,15 @@ final class NagaDPIButtons: ObservableObject {
         guard journal.matches(session), try session.activeProfile() == journal.profile else { throw NagaDPIButtonError.recovery }
         try NagaDPIButtonTransaction.restore(originals: journal.originals, physicalMappingVersion: journal.mappingVersion ?? 1, read: session.read, write: { try session.write($0, profile: journal.profile) })
         try FileManager.default.removeItem(at: url)
+    }
+    /// After the mouse wakes, rewrite only slots that reverted to the journaled originals.
+    private func reassert(_ lease: Lease) throws {
+        for target in NagaDPIButtonBinding.targets {
+            let actual = try lease.session.read(target.slot)
+            guard actual != target else { continue }
+            guard lease.journal.originals.contains(actual) else { throw NagaDPIButtonError.conflict }
+            try lease.session.write(target, profile: lease.journal.profile)
+        }
     }
     private func recoverExisting(_ session: NagaDPIButtonSession) throws {
         let url = journalURL(session)
@@ -181,10 +203,15 @@ final class NagaDPIButtons: ObservableObject {
                 // An unplug leaves the durable recovery record for the next
                 // connection; never send a restore to another interface.
                 self.leases = self.leases.filter { present.contains($0.key) }
+                self.sleeping.formIntersection(self.leases.keys)
                 var waitingReceivers = 0
                 for session in sessions {
                     if let lease = self.leases[session.registryID] {
-                        guard try session.activeProfile() == lease.journal.profile else { throw NagaDPIButtonError.recovery }
+                        // A sleeping wireless mouse makes its receiver report status 4.
+                        // Keep the lease and reassert our blocks once it wakes.
+                        do { guard try session.activeProfile() == lease.journal.profile else { throw NagaDPIButtonError.recovery } }
+                        catch NagaDPIButtonError.receiverUnavailable { self.sleeping.insert(session.registryID); waitingReceivers += 1; continue }
+                        if self.sleeping.remove(session.registryID) != nil { try self.reassert(lease) }
                     } else {
                         // A cabled mouse can leave its plugged-in receiver offline.
                         // Never suppress failures on an already-owned lease.
@@ -221,7 +248,7 @@ final class NagaDPIButtons: ObservableObject {
                 do { try recover(lease.session, journal: lease.journal, url: lease.url) }
                 catch { failure = error.localizedDescription }
             }
-            leases.removeAll()
+            leases.removeAll(); sleeping.removeAll()
         }
         busy = false
         let pending = ((try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []).contains { $0.hasSuffix(".json") }
